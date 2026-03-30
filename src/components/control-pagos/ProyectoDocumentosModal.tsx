@@ -34,14 +34,17 @@ function toDateInputValue(value?: string) {
   return parsed.toISOString().split("T")[0];
 }
 
-function formatDateForDisplay(value?: string) {
-  const iso = toDateInputValue(value);
-  const [year, month, day] = iso.split("-");
-  return `${day}/${month}/${year}`;
-}
+function parseDateToIso(value: string) {
+  const trimmed = value.trim();
 
-function parseDisplayDateToIso(value: string) {
-  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const parsedIso = new Date(`${trimmed}T00:00:00`);
+    if (isNaN(parsedIso.getTime())) return null;
+    if (parsedIso.toISOString().split("T")[0] !== trimmed) return null;
+    return trimmed;
+  }
+
+  const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!match) return null;
   const [, day, month, year] = match;
   const iso = `${year}-${month}-${day}`;
@@ -49,6 +52,10 @@ function parseDisplayDateToIso(value: string) {
   if (isNaN(parsed.getTime())) return null;
   if (parsed.toISOString().split("T")[0] !== iso) return null;
   return iso;
+}
+
+function normalizeObservacion(value: string) {
+  return value.toLocaleUpperCase("es-CL");
 }
 
 export function ProyectoDocumentosModal({
@@ -71,7 +78,7 @@ export function ProyectoDocumentosModal({
 
   const [mode, setMode] = useState<ModalMode>(initialMode);
   const [tipoDocumentoProyectoId, setTipoDocumentoProyectoId] = useState("");
-  const [fechaDocumento, setFechaDocumento] = useState(formatDateForDisplay(todayIsoDate()));
+  const [fechaDocumento, setFechaDocumento] = useState(todayIsoDate());
   const [nroReferencia, setNroReferencia] = useState("");
   const [observacion, setObservacion] = useState("");
   const [archivo, setArchivo] = useState<File | null>(null);
@@ -100,7 +107,7 @@ export function ProyectoDocumentosModal({
 
   const resetForm = () => {
     setTipoDocumentoProyectoId("");
-    setFechaDocumento(formatDateForDisplay(todayIsoDate()));
+    setFechaDocumento(todayIsoDate());
     setNroReferencia("");
     setObservacion("");
     setArchivo(null);
@@ -111,9 +118,9 @@ export function ProyectoDocumentosModal({
   const openEdit = (item: (typeof documentosProyecto)[number]) => {
     setEditingDocumentoId(item.id);
     setTipoDocumentoProyectoId(String(item.tipoDocumentoProyectoId || ""));
-    setFechaDocumento(formatDateForDisplay(item.fechaDocumento));
+    setFechaDocumento(toDateInputValue(item.fechaDocumento));
     setNroReferencia(item.nroReferencia || "");
-    setObservacion(item.observacion || "");
+    setObservacion(normalizeObservacion(item.observacion || ""));
     setArchivo(null);
     setFileInputKey((prev) => prev + 1);
     setMode("create");
@@ -187,11 +194,11 @@ export function ProyectoDocumentosModal({
       return;
     }
 
-    const fechaDocumentoIso = parseDisplayDateToIso(fechaDocumento);
+    const fechaDocumentoIso = parseDateToIso(fechaDocumento);
     if (!fechaDocumentoIso) {
       toast({
         title: "Fecha inválida",
-        description: "Usa el formato dd/mm/yyyy.",
+        description: "Selecciona una fecha valida.",
         variant: "destructive",
       });
       return;
@@ -215,7 +222,7 @@ export function ProyectoDocumentosModal({
           tipoDocumentoProyectoId,
           fechaDocumento: fechaDocumentoIso,
           nroReferencia: nroReferencia.trim(),
-          observacion: observacion.trim(),
+          observacion: normalizeObservacion(observacion.trim()),
         });
 
         toast({
@@ -230,7 +237,7 @@ export function ProyectoDocumentosModal({
           tipoDocumentoProyectoId,
           fechaDocumento: fechaDocumentoIso,
           nroReferencia: nroReferencia.trim(),
-          observacion: observacion.trim(),
+          observacion: normalizeObservacion(observacion.trim()),
           archivo: archivo!,
         });
 
@@ -432,12 +439,11 @@ export function ProyectoDocumentosModal({
                   <Label htmlFor="fechaDocumentoProyecto">Fecha Documento *</Label>
                   <Input
                     id="fechaDocumentoProyecto"
-                    type="text"
+                    type="date"
                     value={fechaDocumento}
                     onChange={(e) => setFechaDocumento(e.target.value)}
-                    placeholder="dd/mm/yyyy"
-                    inputMode="numeric"
-                    pattern="\d{2}/\d{2}/\d{4}"
+                    onClick={(e) => e.currentTarget.showPicker?.()}
+                    onFocus={(e) => e.currentTarget.showPicker?.()}
                     required
                   />
                 </div>
@@ -476,7 +482,7 @@ export function ProyectoDocumentosModal({
                 <Textarea
                   id="observacion"
                   value={observacion}
-                  onChange={(e) => setObservacion(e.target.value)}
+                  onChange={(e) => setObservacion(normalizeObservacion(e.target.value))}
                   rows={3}
                   placeholder="Escribe un comentario opcional..."
                 />

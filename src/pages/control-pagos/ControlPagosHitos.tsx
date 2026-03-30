@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useDocumentosHito, useHitosPagoProyecto, useProyectos } from "@/hooks/useSharePoint";
 import { formatDateOnly } from "@/lib/date-format";
+import { formatNumericInput, parseNumericInput } from "@/lib/numeric-input";
 import type { HitoPagoProyecto, MonedaProyecto } from "@/services/sharepointService";
 import { toast } from "@/hooks/use-toast";
 import { FileText, Pencil, Search, Trash2 } from "lucide-react";
@@ -40,6 +41,10 @@ const initialForm: HitoFormState = {
   observacion: "",
   archivos: [null],
 };
+
+function normalizeObservacion(value: string) {
+  return value.toLocaleUpperCase("es-CL");
+}
 
 function formatAmount(value: number, moneda: MonedaProyecto) {
   if (moneda === "UF") {
@@ -170,13 +175,13 @@ export default function ControlPagosHitos() {
     setEditingHito(item);
     setForm({
       proyectoId: String(item.proyectoId),
-      montoHito: String(item.montoHito),
+      montoHito: formatNumericInput(String(item.montoHito), { allowDecimal: true, maxDecimals: 2 }),
       moneda: item.moneda,
       fechaCompromiso: item.fechaCompromiso || "",
       fechaPago: item.fechaPago || "",
       facturado: item.facturado,
       pagado: item.pagado,
-      observacion: item.observacion || "",
+      observacion: normalizeObservacion(item.observacion || ""),
       archivos: [null],
     });
     setModalOpen(true);
@@ -217,7 +222,8 @@ export default function ControlPagosHitos() {
       return;
     }
 
-    if (!form.montoHito || Number(form.montoHito) <= 0) {
+    const montoHitoValue = parseNumericInput(form.montoHito, { allowDecimal: true, maxDecimals: 2 });
+    if (!Number.isFinite(montoHitoValue) || montoHitoValue <= 0) {
       toast({
         title: "Monto invÃ¡lido",
         description: "El monto del hito debe ser mayor a 0.",
@@ -231,13 +237,13 @@ export default function ControlPagosHitos() {
         await updateHitoPagoProyecto(editingHito.id, {
           proyectoId: form.proyectoId,
           codigoProyecto: project.codigoProyecto || "",
-          montoHito: Number(form.montoHito),
+          montoHito: montoHitoValue,
           moneda: form.moneda,
           fechaCompromiso: form.fechaCompromiso,
           fechaPago: form.fechaPago || undefined,
           facturado: form.facturado,
           pagado: form.pagado,
-          observacion: form.observacion,
+          observacion: normalizeObservacion(form.observacion),
         });
                 const filesToUpload = form.archivos.filter((archivo): archivo is File => Boolean(archivo));
         let uploadedFilesCount = 0;
@@ -277,13 +283,13 @@ export default function ControlPagosHitos() {
         const created = await createHitoPagoProyecto({
           proyectoId: form.proyectoId,
           codigoProyecto: project.codigoProyecto || "",
-          montoHito: Number(form.montoHito),
+          montoHito: montoHitoValue,
           moneda: form.moneda,
           fechaCompromiso: form.fechaCompromiso,
           fechaPago: form.fechaPago || undefined,
           facturado: form.facturado,
           pagado: form.pagado,
-          observacion: form.observacion,
+          observacion: normalizeObservacion(form.observacion),
         });
 
         const filesToUpload = form.archivos.filter((archivo): archivo is File => Boolean(archivo));
@@ -500,11 +506,15 @@ export default function ControlPagosHitos() {
                 <Label htmlFor="montoHito">Monto Hito *</Label>
                 <Input
                   id="montoHito"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={form.montoHito}
-                  onChange={(e) => setForm((prev) => ({ ...prev, montoHito: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      montoHito: formatNumericInput(e.target.value, { allowDecimal: true, maxDecimals: 2 }),
+                    }))
+                  }
                   required
                 />
               </div>
@@ -576,7 +586,9 @@ export default function ControlPagosHitos() {
               <Input
                 id="observacion"
                 value={form.observacion}
-                onChange={(e) => setForm((prev) => ({ ...prev, observacion: e.target.value }))}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, observacion: normalizeObservacion(e.target.value) }))
+                }
               />
             </div>
 

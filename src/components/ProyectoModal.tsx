@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Proyecto } from '@/data/mockData';
+import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import { Save } from 'lucide-react';
 
 interface ProyectoModalProps {
@@ -24,7 +25,7 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
       setNombre(proyecto.nombre ? proyecto.nombre.toUpperCase() : '');
       setMontoTotalProyecto(
         proyecto.montoTotalProyecto !== undefined && proyecto.montoTotalProyecto !== null
-          ? String(proyecto.montoTotalProyecto)
+          ? formatNumericInput(String(proyecto.montoTotalProyecto), { allowDecimal: true, maxDecimals: 2 })
           : ''
       );
       setMonedaBase(proyecto.monedaBase || 'CLP');
@@ -37,9 +38,11 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const montoTotalProyectoParsed = parseNumericInput(montoTotalProyecto, { allowDecimal: true, maxDecimals: 2 });
+
     onSave({
       nombre: nombre.trim().toUpperCase(),
-      montoTotalProyecto: montoTotalProyecto ? Number(montoTotalProyecto) : undefined,
+      montoTotalProyecto: Number.isFinite(montoTotalProyectoParsed) ? montoTotalProyectoParsed : undefined,
       monedaBase,
     });
     onClose();
@@ -69,12 +72,15 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
             <Label htmlFor="montoTotalProyecto">Monto Total del Proyecto</Label>
             <Input
               id="montoTotalProyecto"
-              type="number"
-              min="0"
-              step="0.01"
+              type="text"
+              inputMode="decimal"
               placeholder="0"
               value={montoTotalProyecto}
-              onChange={(e) => setMontoTotalProyecto(e.target.value)}
+              onChange={(e) =>
+                setMontoTotalProyecto(
+                  formatNumericInput(e.target.value, { allowDecimal: true, maxDecimals: 2 })
+                )
+              }
             />
           </div>
 

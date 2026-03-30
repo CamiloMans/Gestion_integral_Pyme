@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { categorias as categoriasMock, empresasData as empresasDataMock, proyectosData, Gasto, Proyecto, Empresa } from '@/data/mockData';
+import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import { Save, Plus, Paperclip, Search } from 'lucide-react';
 import { ProyectoModal } from './ProyectoModal';
 import { EmpresaModal } from './EmpresaModal';
@@ -178,8 +179,9 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
   
   // Calcular Monto Neto e IVA cuando cambia el Monto Total (campo monto)
   useEffect(() => {
-    if (aplicaImpuesto && monto) {
-      const total = parseFloat(monto) || 0;
+    const total = parseNumericInput(monto, { allowDecimal: false });
+
+    if (aplicaImpuesto && Number.isFinite(total)) {
       if (total > 0 && valorImpuesto > 0) {
         // Calcular neto: total / (1 + valorImpuesto)
         const neto = total / (1 + valorImpuesto);
@@ -198,9 +200,9 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
       setMontoNeto('');
       setMontoIva('');
       setMontoTotal('');
-    } else if (!aplicaImpuesto && monto) {
+    } else if (!aplicaImpuesto && Number.isFinite(total)) {
       // Si no aplica impuesto, el monto es el total
-      setMontoTotal(monto);
+      setMontoTotal(total.toFixed(0));
       setMontoNeto('');
       setMontoIva('');
     }
@@ -238,10 +240,10 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
       // Cargar el monto total (el campo monto ahora es el total)
       // Los valores de montoNeto e iva se calcularán automáticamente con el useEffect
       if (gasto.montoTotal !== undefined && gasto.montoTotal !== null) {
-        setMonto(gasto.montoTotal.toString());
+        setMonto(formatNumericInput(gasto.montoTotal.toString(), { allowDecimal: false }));
       } else {
         // Fallback: usar monto si no hay montoTotal
-        setMonto(gasto.monto.toString());
+        setMonto(formatNumericInput(gasto.monto.toString(), { allowDecimal: false }));
       }
       // Inicializar valores vacíos, el useEffect los calculará
       setMontoNeto('');
@@ -309,9 +311,12 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
     
     // Calcular valores de impuestos si aplica
     // El campo monto ahora es siempre el Monto Total
-    const montoTotalValue = monto ? parseInt(monto) : 0;
-    const montoNetoValue = aplicaImpuesto && montoNeto ? parseInt(montoNeto) : undefined;
-    const ivaValue = aplicaImpuesto && montoIva ? parseInt(montoIva) : undefined;
+    const montoTotalParsed = parseNumericInput(monto, { allowDecimal: false });
+    const montoNetoParsed = parseNumericInput(montoNeto, { allowDecimal: false });
+    const montoIvaParsed = parseNumericInput(montoIva, { allowDecimal: false });
+    const montoTotalValue = Number.isFinite(montoTotalParsed) ? montoTotalParsed : 0;
+    const montoNetoValue = aplicaImpuesto && Number.isFinite(montoNetoParsed) ? montoNetoParsed : undefined;
+    const ivaValue = aplicaImpuesto && Number.isFinite(montoIvaParsed) ? montoIvaParsed : undefined;
     
     onSave({
       fecha,
@@ -419,6 +424,10 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
       setCategoriaModalOpen(false);
     }
   };
+
+  const montoValue = parseNumericInput(monto, { allowDecimal: false });
+  const montoNetoValue = parseNumericInput(montoNeto, { allowDecimal: false });
+  const montoIvaValue = parseNumericInput(montoIva, { allowDecimal: false });
 
   return (
     <>
@@ -647,10 +656,11 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
             <div className="flex gap-2">
               <Input
                 id="monto"
-                type="number"
+                type="text"
+                inputMode="numeric"
                 placeholder="0"
                 value={monto}
-                onChange={(e) => setMonto(e.target.value)}
+                onChange={(e) => setMonto(formatNumericInput(e.target.value, { allowDecimal: false }))}
                 required
                 className="flex-1"
               />
@@ -682,16 +692,16 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
                 <div className="flex justify-between items-center text-sm pt-2 border-t">
                   <span className="font-semibold">Monto Total:</span>
                   <span className="font-bold text-lg">
-                    {monto && !isNaN(parseFloat(monto)) && parseFloat(monto) > 0
-                      ? parseInt(monto).toLocaleString('es-CL')
+                    {Number.isFinite(montoValue) && montoValue > 0
+                      ? montoValue.toLocaleString('es-CL')
                       : '0'} CLP
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Monto Neto:</span>
                   <span className="font-medium">
-                    {montoNeto && !isNaN(parseFloat(montoNeto)) && parseFloat(montoNeto) > 0
-                      ? parseInt(montoNeto).toLocaleString('es-CL')
+                    {Number.isFinite(montoNetoValue) && montoNetoValue > 0
+                      ? montoNetoValue.toLocaleString('es-CL')
                       : '0'} CLP
                   </span>
                 </div>
@@ -699,8 +709,8 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-muted-foreground">Monto IVA ({(valorImpuesto * 100).toFixed(2)}%):</span>
                     <span className="font-medium">
-                      {montoIva && !isNaN(parseFloat(montoIva)) && parseFloat(montoIva) > 0
-                        ? parseInt(montoIva).toLocaleString('es-CL')
+                      {Number.isFinite(montoIvaValue) && montoIvaValue > 0
+                        ? montoIvaValue.toLocaleString('es-CL')
                         : '0'} CLP
                     </span>
                   </div>
@@ -712,8 +722,8 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
                 <div className="flex justify-between items-center text-sm pt-2 border-t">
                   <span className="font-semibold">Monto Total:</span>
                   <span className="font-bold text-lg">
-                    {monto && !isNaN(parseFloat(monto)) && parseFloat(monto) > 0
-                      ? parseInt(monto).toLocaleString('es-CL')
+                    {Number.isFinite(montoValue) && montoValue > 0
+                      ? montoValue.toLocaleString('es-CL')
                       : '0'} CLP
                   </span>
                 </div>

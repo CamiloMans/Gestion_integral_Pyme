@@ -39,6 +39,10 @@ const initialForm: DocumentoFormState = {
   archivo: null,
 };
 
+function normalizeObservacion(value: string) {
+  return value.toLocaleUpperCase("es-CL");
+}
+
 export default function ControlPagosDocumentos() {
   const { proyectos } = useProyectos();
   const { tiposDocumentoProyecto } = useTiposDocumentoProyecto();
@@ -124,7 +128,7 @@ export default function ControlPagosDocumentos() {
       tipoDocumentoProyectoId: String(item.tipoDocumentoProyectoId),
       fechaDocumento: item.fechaDocumento || new Date().toISOString().split("T")[0],
       nroReferencia: item.nroReferencia || "",
-      observacion: item.observacion || "",
+      observacion: normalizeObservacion(item.observacion || ""),
       archivo: null,
     });
     setModalOpen(true);
@@ -151,7 +155,7 @@ export default function ControlPagosDocumentos() {
           tipoDocumentoProyectoId: form.tipoDocumentoProyectoId,
           fechaDocumento: form.fechaDocumento,
           nroReferencia: form.nroReferencia,
-          observacion: form.observacion,
+          observacion: normalizeObservacion(form.observacion),
         });
         toast({
           title: "Documento actualizado",
@@ -174,7 +178,7 @@ export default function ControlPagosDocumentos() {
           tipoDocumentoProyectoId: form.tipoDocumentoProyectoId,
           fechaDocumento: form.fechaDocumento,
           nroReferencia: form.nroReferencia,
-          observacion: form.observacion,
+          observacion: normalizeObservacion(form.observacion),
           archivo: form.archivo,
         });
         toast({
@@ -382,6 +386,8 @@ export default function ControlPagosDocumentos() {
                   type="date"
                   value={form.fechaDocumento}
                   onChange={(e) => setForm((prev) => ({ ...prev, fechaDocumento: e.target.value }))}
+                  onClick={(e) => e.currentTarget.showPicker?.()}
+                  onFocus={(e) => e.currentTarget.showPicker?.()}
                   required
                 />
               </div>
@@ -400,7 +406,9 @@ export default function ControlPagosDocumentos() {
               <Textarea
                 id="observacion"
                 value={form.observacion}
-                onChange={(e) => setForm((prev) => ({ ...prev, observacion: e.target.value }))}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, observacion: normalizeObservacion(e.target.value) }))
+                }
                 rows={3}
               />
             </div>
