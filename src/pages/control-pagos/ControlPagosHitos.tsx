@@ -267,11 +267,11 @@ export default function ControlPagosHitos() {
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead>PROYECTO</TableHead>
-              <TableHead>NRO_HITO</TableHead>
-              <TableHead>MONTO_HITO</TableHead>
+              <TableHead>NRO HITO</TableHead>
+              <TableHead>MONTO HITO</TableHead>
               <TableHead>MONEDA</TableHead>
-              <TableHead>FECHA_COMPROMISO</TableHead>
-              <TableHead>FECHA_PAGO</TableHead>
+              <TableHead>FECHA COMPROMISO</TableHead>
+              <TableHead>FECHA PAGO</TableHead>
               <TableHead>FACTURADO</TableHead>
               <TableHead>PAGADO</TableHead>
               <TableHead className="text-center">ACCIONES</TableHead>

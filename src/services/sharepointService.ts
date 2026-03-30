@@ -1612,7 +1612,7 @@ async function ensureUniqueProjectCode(
 ): Promise<void> {
   const normalizedCode = normalizeProjectCode(code);
   if (!normalizedCode) {
-    throw new Error("El cÃ³digo de proyecto es obligatorio");
+    throw new Error("El código de proyecto es obligatorio");
   }
 
   const proyectos = await proyectosService.getAll();
@@ -1622,7 +1622,7 @@ async function ensureUniqueProjectCode(
   );
 
   if (duplicated) {
-    throw new Error(`Ya existe un proyecto con cÃ³digo "${normalizedCode}"`);
+    throw new Error(`Ya existe un proyecto con código "${normalizedCode}"`);
   }
 }
 
@@ -2246,7 +2246,7 @@ function parseBoolean(value: any, fallback = false): boolean {
   if (typeof value === "number") return value === 1;
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (["true", "1", "si", "sÃ­", "yes"].includes(normalized)) return true;
+    if (["true", "1", "si", "sí", "yes"].includes(normalized)) return true;
     if (["false", "0", "no"].includes(normalized)) return false;
   }
   return fallback;
@@ -2591,7 +2591,7 @@ export const documentosProyectoService = {
     const tipoDocumentoLookupId = Number(input.tipoDocumentoProyectoId);
 
     if (Number.isNaN(proyectoLookupId) || Number.isNaN(tipoDocumentoLookupId)) {
-      throw new Error("IDs de lookup invÃ¡lidos para el documento de proyecto");
+      throw new Error("IDs de lookup inválidos para el documento de proyecto");
     }
 
     try {
@@ -2779,7 +2779,7 @@ export const hitosPagoProyectoService = {
     const proyectoLookupId = Number(input.proyectoId);
 
     if (Number.isNaN(proyectoLookupId)) {
-      throw new Error("ID de proyecto invÃ¡lido para crear hito");
+      throw new Error("ID de proyecto inválido para crear hito");
     }
 
     try {

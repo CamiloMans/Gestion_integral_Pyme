@@ -160,8 +160,13 @@ export default function Gastos() {
   const gastos = (isAuthenticated && !authLoading) ? gastosSharePoint : gastosData;
 
   const nombreRegistradorActual = useMemo(() => {
+    if (editingGasto) {
+      const nombreDesdePersona = (editingGasto.colaboradorNombre || '').trim();
+      return nombreDesdePersona || 'Persona no identificada';
+    }
+
     const correoUsuarioLogueado = account?.username?.toLowerCase().trim() || '';
-    if (!correoUsuarioLogueado) return '';
+    if (!correoUsuarioLogueado) return 'Persona no identificada';
 
     const colaborador = colaboradoresData.find(
       (item) => (item.email || '').toLowerCase().trim() === correoUsuarioLogueado
@@ -178,13 +183,14 @@ export default function Gastos() {
       }
     }
 
-    // Fallback: nombre desde lista COLABORADORES
-    if (colaborador?.nombre) {
-      return colaborador.nombre;
+    // Fallback global: cualquier valor visible de PERSONA obtenido desde REGISTRO_GASTOS
+    const gastoConPersona = gastos.find((item) => !!(item.colaboradorNombre || '').trim());
+    if (gastoConPersona?.colaboradorNombre) {
+      return gastoConPersona.colaboradorNombre;
     }
 
-    return account?.name || '';
-  }, [account, colaboradoresData, gastos]);
+    return 'Persona no identificada';
+  }, [account, colaboradoresData, gastos, editingGasto]);
   
   // Ordenar empresas alfabéticamente
   const empresasOrdenadas = useMemo(() => {

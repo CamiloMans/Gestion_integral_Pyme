@@ -332,8 +332,8 @@ export function ProyectoDocumentosModal({
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/50">
-                    <TableHead>TIPO_DOCUMENTO</TableHead>
-                    <TableHead>FECHA_DOCUMENTO</TableHead>
+                    <TableHead>TIPO DOCUMENTO</TableHead>
+                    <TableHead>FECHA DOCUMENTO</TableHead>
                     <TableHead>ARCHIVO</TableHead>
                     <TableHead className="text-center">ACCIONES</TableHead>
                   </TableRow>
@@ -361,27 +361,29 @@ export function ProyectoDocumentosModal({
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setComentarioSeleccionado({
-                                tipoDocumento: item.tipoDocumentoNombre,
-                                texto: item.observacion,
-                              });
-                              setComentarioDialogOpen(true);
-                            }}
-                            title="Ver comentario"
-                          >
-                            <MessageSquare size={16} />
-                          </Button>
+                          {item.observacion?.trim() ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setComentarioSeleccionado({
+                                  tipoDocumento: item.tipoDocumentoNombre,
+                                  texto: item.observacion,
+                                });
+                                setComentarioDialogOpen(true);
+                              }}
+                              title="Ver comentario"
+                            >
+                              <MessageSquare size={16} />
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => openEdit(item)}
                             title="Editar documento"
                           >
-                            <Pencil size={16} />
+                            <Pencil size={16} className="text-green-600" />
                           </Button>
                           <Button
                             variant="ghost"

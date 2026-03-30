@@ -57,14 +57,14 @@ export default function ControlPagosProyectos() {
         await updateProyecto(editingProyecto.id, payload);
         toast({
           title: "Proyecto actualizado",
-          description: "Se actualizÃ³ correctamente.",
+          description: "Se actualizó correctamente.",
           variant: "success",
         });
       } else {
         await createProyecto(payload);
         toast({
           title: "Proyecto creado",
-          description: "Se creÃ³ correctamente.",
+          description: "Se creó correctamente.",
           variant: "success",
         });
       }
@@ -85,7 +85,7 @@ export default function ControlPagosProyectos() {
       await deleteProyecto(deleteTarget.id);
       toast({
         title: "Proyecto eliminado",
-        description: "Se eliminÃ³ correctamente.",
+        description: "Se eliminó correctamente.",
         variant: "success",
       });
     } catch (error) {
@@ -137,7 +137,7 @@ export default function ControlPagosProyectos() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
-            placeholder="Buscar por cÃ³digo o nombre de proyecto..."
+            placeholder="Buscar por código o nombre de proyecto..."
           />
         </div>
       </div>
@@ -146,10 +146,10 @@ export default function ControlPagosProyectos() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead>COD_PROYECTO</TableHead>
+              <TableHead>COD PROYECTO</TableHead>
               <TableHead>PROYECTO</TableHead>
-              <TableHead>MONTO_TOTAL_PROY</TableHead>
-              <TableHead>MONEDA_BASE</TableHead>
+              <TableHead>MONTO TOTAL PROY</TableHead>
+              <TableHead>MONEDA BASE</TableHead>
               <TableHead className="text-center">DOCUMENTOS</TableHead>
               <TableHead className="text-center">ACCIONES</TableHead>
             </TableRow>
@@ -235,7 +235,7 @@ export default function ControlPagosProyectos() {
           if (!open) setDeleteTarget(null);
         }}
         title="Eliminar proyecto"
-        description={`Â¿Seguro que deseas eliminar "${deleteTarget?.nombre || "este proyecto"}"? Esta acciÃ³n no se puede deshacer.`}
+        description={`¿Seguro que deseas eliminar "${deleteTarget?.nombre || "este proyecto"}"? Esta acción no se puede deshacer.`}
         onConfirm={confirmDelete}
         confirmText="Eliminar"
         cancelText="Cancelar"

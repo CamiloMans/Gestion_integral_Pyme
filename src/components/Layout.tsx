@@ -33,23 +33,23 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
     controlPagosNavItems.some((item) => item.path === location.pathname)
   );
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
-  const SWIPE_THRESHOLD = 50; // Distancia mínima para considerar un swipe
+  const SWIPE_THRESHOLD = 50; // Distancia mÃƒÂ­nima para considerar un swipe
   const EDGE_THRESHOLD = 30; // Distancia desde el borde izquierdo para activar
-  const SWIPE_TIME_THRESHOLD = 300; // Tiempo máximo en ms para considerar un swipe
+  const SWIPE_TIME_THRESHOLD = 300; // Tiempo mÃƒÂ¡ximo en ms para considerar un swipe
 
   // Detectar swipe desde el borde izquierdo
   useEffect(() => {
     const isMobile = () => window.innerWidth < 1024;
     
     const handleTouchStart = (e: TouchEvent) => {
-      // Solo en móvil y cuando el sidebar está cerrado
+      // Solo en mÃƒÂ³vil y cuando el sidebar estÃƒÂ¡ cerrado
       if (!isMobile() || mobileMenuOpen) {
         touchStartRef.current = null;
         return;
       }
       
       const touch = e.touches[0];
-      // Verificar si el touch comenzó cerca del borde izquierdo
+      // Verificar si el touch comenzÃƒÂ³ cerca del borde izquierdo
       if (touch.clientX <= EDGE_THRESHOLD) {
         touchStartRef.current = {
           x: touch.clientX,
@@ -85,7 +85,7 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
       const deltaY = Math.abs(touch.clientY - touchStartRef.current.y);
       const deltaTime = Date.now() - touchStartRef.current.time;
       
-      // Verificar si es un swipe válido: hacia la derecha, no muy vertical, y rápido
+      // Verificar si es un swipe vÃƒÂ¡lido: hacia la derecha, no muy vertical, y rÃƒÂ¡pido
       if (
         deltaX >= SWIPE_THRESHOLD &&
         deltaY < 100 &&
@@ -124,12 +124,12 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-background flex">
-      {/* Icono hamburguesa - solo visible en móvil cuando el sidebar está oculto */}
+      {/* Icono hamburguesa - solo visible en mÃƒÂ³vil cuando el sidebar estÃƒÂ¡ oculto */}
       {!mobileMenuOpen && (
         <button
           className="fixed left-4 top-4 z-50 lg:hidden p-2 bg-card/40 backdrop-blur-sm rounded-lg shadow-md hover:bg-card/60 transition-colors"
           onClick={() => setMobileMenuOpen(true)}
-          aria-label="Abrir menú"
+          aria-label="Abrir menÃƒÂº"
         >
           <Menu size={24} className="text-foreground/70" />
         </button>
@@ -144,13 +144,13 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
       >
         <div className="p-6">
           {/* Logo en sidebar */}
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center bg-transparent">
+          <div className="mb-8 flex flex-col items-center text-center">
+            <div className="w-20 h-20 rounded-xl overflow-hidden flex items-center justify-center bg-transparent">
               {!logoError ? (
                 <img 
                   src="/logo-rekosol.png" 
                   alt="RekoSol Logo" 
-                  className="w-full h-full object-cover rounded-xl"
+                  className="w-full h-full object-contain"
                   onError={() => setLogoError(true)}
                 />
               ) : (
@@ -158,10 +158,6 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
                   <DollarSign className="w-6 h-6 text-primary" />
                 </div>
               )}
-            </div>
-            <div>
-              <h1 className="font-bold text-lg text-foreground">RekoSol</h1>
-              <p className="text-sm text-muted-foreground">Gestión de Gastos</p>
             </div>
           </div>
 
@@ -292,3 +288,6 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
     </div>
   );
 }
+
+
+

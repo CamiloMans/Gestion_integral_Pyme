@@ -19,7 +19,7 @@ import {
 import type { DocumentoProyecto } from "@/services/sharepointService";
 import { toast } from "@/hooks/use-toast";
 import { formatDateOnly } from "@/lib/date-format";
-import { Eye, FileText, Pencil, Search, Trash2 } from "lucide-react";
+import { FileText, Pencil, Search, Trash2 } from "lucide-react";
 
 interface DocumentoFormState {
   proyectoId: string;
@@ -57,7 +57,7 @@ export default function ControlPagosDocumentos() {
   const [form, setForm] = useState<DocumentoFormState>(initialForm);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
 
   const projectById = useMemo(() => {
     const map = new Map<string, { nombre: string; codigo?: string }>();
@@ -196,9 +196,9 @@ export default function ControlPagosDocumentos() {
   };
 
   const confirmDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteTarget?.id) return;
     try {
-      await deleteDocumentoProyecto(deleteId);
+      await deleteDocumentoProyecto(deleteTarget.id);
       toast({
         title: "Documento eliminado",
         description: "Se eliminÃ³ correctamente.",
@@ -211,7 +211,7 @@ export default function ControlPagosDocumentos() {
         variant: "destructive",
       });
     } finally {
-      setDeleteId(null);
+      setDeleteTarget(null);
     }
   };
 
@@ -256,9 +256,9 @@ export default function ControlPagosDocumentos() {
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead>PROYECTO</TableHead>
-              <TableHead>TIPO_DOCUMENTO</TableHead>
-              <TableHead>FECHA_DOCUMENTO</TableHead>
-              <TableHead>NRO_REFERENCIA</TableHead>
+              <TableHead>TIPO DOCUMENTO</TableHead>
+              <TableHead>FECHA DOCUMENTO</TableHead>
+              <TableHead>NRO REFERENCIA</TableHead>
               <TableHead>ARCHIVO</TableHead>
               <TableHead className="text-center">ACCIONES</TableHead>
             </TableRow>
@@ -290,20 +290,16 @@ export default function ControlPagosDocumentos() {
                   <div className="flex justify-center gap-1">
                     <Button variant="ghost" size="icon" onClick={() => openEditModal(item)}>
                       <Pencil size={16} />
-                    </Button>
-                    <Button
+                    </Button>                    <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => {
-                        if (item.archivoAdjunto) {
-                          setSelectedFile(item.archivoAdjunto);
-                          setViewerOpen(true);
-                        }
-                      }}
+                      onClick={() =>
+                        setDeleteTarget({
+                          id: item.id,
+                          label: item.archivoAdjunto?.nombre || item.nroReferencia || item.tipoDocumentoNombre || "este documento",
+                        })
+                      }
                     >
-                      <Eye size={16} />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setDeleteId(item.id)}>
                       <Trash2 size={16} className="text-destructive" />
                     </Button>
                   </div>
@@ -443,12 +439,12 @@ export default function ControlPagosDocumentos() {
       />
 
       <ConfirmDialog
-        open={Boolean(deleteId)}
+        open={Boolean(deleteTarget)}
         onOpenChange={(open) => {
-          if (!open) setDeleteId(null);
+          if (!open) setDeleteTarget(null);
         }}
         title="Eliminar documento"
-        description="Â¿Seguro que deseas eliminar este documento? Esta acciÃ³n no se puede deshacer."
+        description={`¿Seguro que deseas eliminar "${deleteTarget?.label || "este documento"}"? Esta acción no se puede deshacer.`}
         onConfirm={confirmDelete}
         confirmText="Eliminar"
         cancelText="Cancelar"
@@ -456,3 +452,5 @@ export default function ControlPagosDocumentos() {
     </Layout>
   );
 }
+
+
