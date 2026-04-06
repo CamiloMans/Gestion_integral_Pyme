@@ -19,7 +19,7 @@ import {
 import type { DocumentoProyecto } from "@/services/sharepointService";
 import { toast } from "@/hooks/use-toast";
 import { formatDateOnly } from "@/lib/date-format";
-import { FileText, Pencil, Search, Trash2 } from "lucide-react";
+import { FileText, Paperclip, Pencil, Search, Trash2 } from "lucide-react";
 
 interface DocumentoFormState {
   proyectoId: string;
@@ -395,25 +395,84 @@ export default function ControlPagosDocumentos() {
 
             <div className="space-y-2">
               <Label htmlFor="tipo">Tipo de Documento *</Label>
-              <Select
-                value={form.tipoDocumentoProyectoId || undefined}
-                onValueChange={(value) => setForm((prev) => ({ ...prev, tipoDocumentoProyectoId: value }))}
-                required
-              >
-                <SelectTrigger id="tipo" className="bg-card">
-                  <SelectValue placeholder="Seleccionar tipo de documento" />
-                </SelectTrigger>
-                <SelectContent className="bg-card">
-                  {tiposDocumentoProyecto
-                    .filter((item) => item.activo)
-                    .sort((a, b) => (a.orden || 9999) - (b.orden || 9999))
-                    .map((item) => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.nombre}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              <input
+                id="archivo"
+                type="file"
+                className="hidden"
+                ref={fileInputRef}
+                aria-label={editingDocumento ? "Seleccionar archivo (opcional)" : "Seleccionar archivo"}
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  clearLocalPreview();
+                  setSelectedFile(undefined);
+                  setForm((prev) => ({ ...prev, archivo: file }));
+                }}
+              />
+              <div className="flex gap-2">
+                <Select
+                  value={form.tipoDocumentoProyectoId || undefined}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, tipoDocumentoProyectoId: value }))}
+                  required
+                >
+                  <SelectTrigger id="tipo" className="bg-card">
+                    <SelectValue placeholder="Seleccionar tipo de documento" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-card">
+                    {tiposDocumentoProyecto
+                      .filter((item) => item.activo)
+                      .sort((a, b) => (a.orden || 9999) - (b.orden || 9999))
+                      .map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.nombre}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Adjuntar documentos"
+                >
+                  <Paperclip size={18} />
+                </Button>
+              </div>
+              {form.archivo ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <div
+                    className="flex cursor-pointer items-center gap-2 rounded-md bg-muted px-2 py-1 text-sm hover:bg-muted/80"
+                    role="button"
+                    tabIndex={0}
+                    onClick={openSelectedFilePreview}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openSelectedFilePreview();
+                      }
+                    }}
+                  >
+                    <span className="truncate">{form.archivo.name}</span>
+                    <button
+                      type="button"
+                      className="leading-none text-muted-foreground hover:text-foreground"
+                      aria-label="Quitar archivo"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearLocalPreview();
+                        setSelectedFile(undefined);
+                        setForm((prev) => ({ ...prev, archivo: null }));
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">Ningun archivo seleccionado.</p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -449,38 +508,6 @@ export default function ControlPagosDocumentos() {
                 }
                 rows={3}
               />
-            </div>
-
-            <div className="space-y-2">
-              <input
-                id="archivo"
-                type="file"
-                className="hidden"
-                ref={fileInputRef}
-                aria-label={editingDocumento ? "Seleccionar archivo (opcional)" : "Seleccionar archivo"}
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null;
-                  clearLocalPreview();
-                  setSelectedFile(undefined);
-                  setForm((prev) => ({ ...prev, archivo: file }));
-                }}
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
-                  Seleccionar archivo
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={openSelectedFilePreview}
-                  disabled={!form.archivo}
-                >
-                  Previsualizar
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {form.archivo ? `Archivo seleccionado: ${form.archivo.name}` : "Ningun archivo seleccionado."}
-              </p>
             </div>
 
             <div className="flex justify-end gap-2 border-t pt-4">

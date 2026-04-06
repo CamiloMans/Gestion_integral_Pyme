@@ -501,22 +501,20 @@ export function ProyectoDocumentosModal({
                       setArchivo(e.target.files?.[0] || null);
                     }}
                   />
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
-                      Seleccionar archivo
-                    </Button>
-                    <Button
+                  <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                    Seleccionar archivo
+                  </Button>
+                  {archivo ? (
+                    <button
                       type="button"
-                      variant="outline"
+                      className="flex w-fit max-w-full items-center gap-2 rounded-md bg-muted px-2 py-1 text-sm hover:bg-muted/80"
                       onClick={openSelectedFilePreview}
-                      disabled={!archivo}
                     >
-                      Previsualizar
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {archivo ? `Archivo seleccionado: ${archivo.name}` : "Ningun archivo seleccionado."}
-                  </p>
+                      <span className="truncate">{archivo.name}</span>
+                    </button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Ningun archivo seleccionado.</p>
+                  )}
                 </div>
               </div>
 

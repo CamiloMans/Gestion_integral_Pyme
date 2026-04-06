@@ -13,6 +13,7 @@ import { ProyectoModal } from './ProyectoModal';
 import { EmpresaModal } from './EmpresaModal';
 import { CategoriaModal } from './CategoriaModal';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DocumentoViewer } from './DocumentoViewer';
 import { useProyectos, useEmpresas, useCategorias, useTiposDocumento, useSharePointAuth } from '@/hooks/useSharePoint';
 import type { Categoria } from '@/services/sharepointService';
 
@@ -54,6 +55,29 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
   const [busquedaEmpresa, setBusquedaEmpresa] = useState('');
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [archivoAEliminar, setArchivoAEliminar] = useState<number | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+
+  const clearLocalPreview = () => {
+    if (localPreviewUrl) {
+      URL.revokeObjectURL(localPreviewUrl);
+      setLocalPreviewUrl(null);
+    }
+    setSelectedPreviewFile(undefined);
+  };
+
+  const openArchivoPreview = (archivo: File) => {
+    clearLocalPreview();
+    const previewUrl = URL.createObjectURL(archivo);
+    setLocalPreviewUrl(previewUrl);
+    setSelectedPreviewFile({
+      nombre: archivo.name,
+      url: previewUrl,
+      tipo: archivo.type || 'application/octet-stream',
+    });
+    setViewerOpen(true);
+  };
   
   // Usar datos de SharePoint si está autenticado, sino usar datos mock
   const proyectos = isAuthenticated ? (proyectosSharePoint || []) : proyectosData;
@@ -209,6 +233,12 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
   }, [monto, aplicaImpuesto, valorImpuesto]);
 
   useEffect(() => {
+    if (!open) {
+      setViewerOpen(false);
+      clearLocalPreview();
+      return;
+    }
+
     if (gasto) {
       // Convertir la fecha al formato YYYY-MM-DD para el input de tipo date
       let fechaFormateada = '';
@@ -270,6 +300,14 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gasto, open]); // categorias está en useMemo, no necesita estar en dependencias
+
+  useEffect(() => {
+    return () => {
+      if (localPreviewUrl) {
+        URL.revokeObjectURL(localPreviewUrl);
+      }
+    };
+  }, [localPreviewUrl]);
   
   // Auto-seleccionar "Persona Natural" cuando se selecciona la categoría "Honorarios"
   useEffect(() => {
@@ -734,7 +772,16 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
                 {archivosAdjuntos.map((archivo, index) => (
                   <div
                     key={index}
-                    className="flex items-center gap-2 px-2 py-1 bg-muted rounded-md text-sm"
+                    className="flex items-center gap-2 px-2 py-1 bg-muted rounded-md text-sm cursor-pointer hover:bg-muted/80"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openArchivoPreview(archivo)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openArchivoPreview(archivo);
+                      }
+                    }}
                   >
                     <span className="truncate max-w-[200px]">{archivo.name}</span>
                     <Button
@@ -742,7 +789,8 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
                       variant="ghost"
                       size="icon"
                       className="h-4 w-4"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setArchivoAEliminar(index);
                         setConfirmDialogOpen(true);
                       }}
@@ -815,6 +863,12 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
         }
         onConfirm={() => {
           if (archivoAEliminar !== null) {
+            const archivoEliminado = archivosAdjuntos[archivoAEliminar];
+            if (archivoEliminado && selectedPreviewFile?.nombre === archivoEliminado.name) {
+              setViewerOpen(false);
+              clearLocalPreview();
+            }
+
             const nuevosArchivos = archivosAdjuntos.filter((_, i) => i !== archivoAEliminar);
             setArchivosAdjuntos(nuevosArchivos);
             setArchivoAEliminar(null);
@@ -822,6 +876,15 @@ export function GastoModal({ open, onClose, onSave, gasto, nombreRegistrador }: 
         }}
         confirmText="Eliminar"
         cancelText="Cancelar"
+      />
+
+      <DocumentoViewer
+        open={viewerOpen}
+        onClose={() => {
+          setViewerOpen(false);
+          clearLocalPreview();
+        }}
+        archivo={selectedPreviewFile}
       />
     </>
   );

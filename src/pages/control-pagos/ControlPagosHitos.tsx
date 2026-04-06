@@ -726,26 +726,24 @@ export default function ControlPagosHitos() {
                       });
                     }}
                   />
-                  <div className="flex flex-wrap gap-2">
-                    <Button
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => (document.getElementById(`archivosHito-${index}`) as HTMLInputElement | null)?.click()}
+                  >
+                    Seleccionar archivo
+                  </Button>
+                  {archivo ? (
+                    <button
                       type="button"
-                      variant="outline"
-                      onClick={() => (document.getElementById(`archivosHito-${index}`) as HTMLInputElement | null)?.click()}
-                    >
-                      Seleccionar archivo
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!archivo}
+                      className="flex w-fit max-w-full items-center gap-2 rounded-md bg-muted px-2 py-1 text-sm hover:bg-muted/80"
                       onClick={() => openLocalFilePreview(archivo)}
                     >
-                      Previsualizar
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {archivo ? `Archivo seleccionado: ${archivo.name}` : "Ningún archivo seleccionado."}
-                  </p>
+                      <span className="truncate">{archivo.name}</span>
+                    </button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Ningún archivo seleccionado.</p>
+                  )}
                 </div>
               ))}
 
