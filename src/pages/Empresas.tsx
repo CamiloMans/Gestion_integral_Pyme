@@ -7,18 +7,21 @@ import { ColaboradorModal } from '@/components/ColaboradorModal';
 import { CategoriaModal } from '@/components/CategoriaModal';
 import { TipoDocumentoModal } from '@/components/TipoDocumentoModal';
 import { TipoDocumentoProyectoModal } from '@/components/TipoDocumentoProyectoModal';
+import { UserInviteModal } from '@/components/UserInviteModal';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Search, Building2, FolderKanban, Users, Tag, FileText, Pencil, Trash2, FolderTree } from 'lucide-react';
+import { Search, Building2, FolderKanban, Users, Tag, FileText, Pencil, Trash2, FolderTree, UserPlus } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ColorPicker } from '@/components/ColorPicker';
 import { formatDateLong, type Colaborador, type Empresa, type Proyecto } from '@/data/mockData';
 import {
+  type InviteUserInput,
   postgresApi,
   type CategoriaOption,
   type ConfiguracionResponse,
+  type TenantUser,
   type TipoDocumentoOption,
   type TipoDocumentoProyectoOption,
 } from '@/services/postgresApi';
@@ -27,6 +30,7 @@ type VistaConfiguracion =
   | 'empresas'
   | 'proyectos'
   | 'colaboradores'
+  | 'usuarios'
   | 'categorias'
   | 'tiposDocumento'
   | 'tiposDocumentoProyecto';
@@ -46,6 +50,7 @@ const VIEW_OPTIONS: Array<{
   { key: 'empresas', label: 'Empresas', icon: Building2, actionLabel: 'Nueva Empresa' },
   { key: 'proyectos', label: 'Proyectos', icon: FolderKanban, actionLabel: 'Nuevo Proyecto' },
   { key: 'colaboradores', label: 'Colaboradores', icon: Users, actionLabel: 'Nuevo Colaborador' },
+  { key: 'usuarios', label: 'Usuarios', icon: UserPlus, actionLabel: 'Invitar Usuario' },
   { key: 'categorias', label: 'Categorias', icon: Tag, actionLabel: 'Nueva Categoria' },
   { key: 'tiposDocumento', label: 'Tipos de Documento', icon: FileText, actionLabel: 'Nuevo Tipo' },
   { key: 'tiposDocumentoProyecto', label: 'Docs. de Proyecto', icon: FolderTree, actionLabel: 'Nuevo Documento' },
@@ -69,8 +74,35 @@ function renderStatusBadge(isActive?: boolean) {
   );
 }
 
+function renderInvitationBadge(invitationState: TenantUser['invitationState']) {
+  return invitationState === 'vinculado' ? (
+    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800">
+      Vinculado
+    </span>
+  ) : (
+    <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+      Pendiente
+    </span>
+  );
+}
+
+function renderRoleBadge(role: TenantUser['role']) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-muted px-2 py-1 text-xs font-medium text-foreground">
+      {role === 'admin' ? 'Administrador' : 'Miembro'}
+    </span>
+  );
+}
+
+function formatAuthProviders(authProviders: TenantUser['authProviders']) {
+  return authProviders
+    .map((provider) => (provider === 'google' ? 'Google' : 'Microsoft'))
+    .join(', ');
+}
+
 export default function Empresas() {
   const [configData, setConfigData] = useState<ConfiguracionResponse | null>(null);
+  const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [vista, setVista] = useState<VistaConfiguracion>('empresas');
@@ -90,11 +122,17 @@ export default function Empresas() {
     setError(null);
 
     try {
-      setConfigData(await postgresApi.getConfiguracion());
+      const [nextConfigData, nextTenantUsers] = await Promise.all([
+        postgresApi.getConfiguracion(),
+        postgresApi.getUsuarios(),
+      ]);
+      setConfigData(nextConfigData);
+      setTenantUsers(nextTenantUsers);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'No se pudo cargar la configuracion';
       setError(message);
       setConfigData(null);
+      setTenantUsers([]);
     } finally {
       setLoading(false);
     }
@@ -117,6 +155,7 @@ export default function Empresas() {
   const empresas = useMemo(() => sortByLabel(configData?.empresas || [], (item) => item.razonSocial), [configData]);
   const proyectos = useMemo(() => sortByLabel(configData?.proyectos || [], (item) => item.nombre), [configData]);
   const colaboradores = useMemo(() => sortByLabel(configData?.colaboradores || [], (item) => item.nombre), [configData]);
+  const usuarios = useMemo(() => sortByLabel(tenantUsers, (item) => item.email), [tenantUsers]);
   const categorias = useMemo(() => sortByLabel(configData?.categorias || [], (item) => item.nombre), [configData]);
   const tiposDocumento = useMemo(() => sortByLabel(configData?.tiposDocumento || [], (item) => item.nombre), [configData]);
   const tiposDocumentoProyecto = useMemo(
@@ -155,6 +194,19 @@ export default function Empresas() {
     );
   }, [colaboradores, searchTerm]);
 
+  const filteredUsuarios = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return usuarios;
+    return usuarios.filter((item) =>
+      item.email.toLowerCase().includes(term) ||
+      item.nombre.toLowerCase().includes(term) ||
+      item.role.toLowerCase().includes(term) ||
+      item.estado.toLowerCase().includes(term) ||
+      item.invitationState.toLowerCase().includes(term) ||
+      item.authProviders.some((provider) => provider.toLowerCase().includes(term)),
+    );
+  }, [usuarios, searchTerm]);
+
   const filteredCategorias = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return categorias;
@@ -186,6 +238,7 @@ export default function Empresas() {
     () => VIEW_OPTIONS.find((option) => option.key === vista) || VIEW_OPTIONS[0],
     [vista],
   );
+  const ActiveViewIcon = activeView.icon;
 
   const currentCount = useMemo(() => {
     switch (vista) {
@@ -195,6 +248,8 @@ export default function Empresas() {
         return filteredProyectos.length;
       case 'colaboradores':
         return filteredColaboradores.length;
+      case 'usuarios':
+        return filteredUsuarios.length;
       case 'categorias':
         return filteredCategorias.length;
       case 'tiposDocumento':
@@ -209,6 +264,7 @@ export default function Empresas() {
     filteredProyectos.length,
     filteredTiposDocumento.length,
     filteredTiposDocumentoProyecto.length,
+    filteredUsuarios.length,
     vista,
   ]);
 
@@ -340,6 +396,23 @@ export default function Empresas() {
     }
   };
 
+  const handleInviteUser = async (payload: InviteUserInput) => {
+    try {
+      const invitedUser = await postgresApi.inviteUsuario(payload);
+      toast({
+        title: 'Usuario invitado',
+        description: invitedUser.invitationState === 'vinculado'
+          ? 'El usuario ya estaba vinculado y su acceso quedo actualizado para este tenant.'
+          : 'La invitacion quedo activa para que inicie sesion con Microsoft o Google.',
+        variant: 'success',
+      });
+      closeModal();
+      await loadData();
+    } catch (mutationError) {
+      handleMutationError('Error al invitar al usuario', mutationError);
+    }
+  };
+
   const handleCategoriaColorChange = async (categoria: CategoriaOption, color: string) => {
     try {
       await postgresApi.updateCategoria(categoria.id, {
@@ -377,6 +450,8 @@ export default function Empresas() {
         case 'colaboradores':
           await postgresApi.deleteColaborador(deleteTarget.id);
           break;
+        case 'usuarios':
+          return;
         case 'categorias':
           await postgresApi.deleteCategoria(deleteTarget.id);
           break;
@@ -471,6 +546,23 @@ export default function Empresas() {
       ));
     }
 
+    if (vista === 'usuarios') {
+      if (filteredUsuarios.length === 0) {
+        return <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar usuarios desde PostgreSQL' : 'No hay usuarios invitados en este tenant'}</TableCell></TableRow>;
+      }
+
+      return filteredUsuarios.map((item) => (
+        <TableRow key={item.membershipId}>
+          <TableCell><div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted"><UserPlus size={18} className="text-muted-foreground" /></div><div><p className="font-medium">{item.nombre}</p><p className="text-sm text-muted-foreground">{item.authLinked ? `Proveedores vinculados: ${formatAuthProviders(item.authProviders)}` : 'Pendiente del primer ingreso'}</p></div></div></TableCell>
+          <TableCell>{item.email}</TableCell>
+          <TableCell>{renderRoleBadge(item.role)}</TableCell>
+          <TableCell>{renderInvitationBadge(item.invitationState)}</TableCell>
+          <TableCell>{renderStatusBadge(item.estado !== 'inactivo')}</TableCell>
+          <TableCell>{formatDateLong(item.createdAt || '')}</TableCell>
+        </TableRow>
+      ));
+    }
+
     if (vista === 'categorias') {
       if (filteredCategorias.length === 0) {
         return <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar categorias desde PostgreSQL' : 'No hay categorias para mostrar'}</TableCell></TableRow>;
@@ -530,6 +622,11 @@ export default function Empresas() {
             <Input placeholder={`Buscar en ${activeView.label.toLowerCase()}...`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
           </div>
 
+          <Button type="button" onClick={openCreateModal} className="sm:hidden gap-2">
+            <ActiveViewIcon size={16} />
+            {activeView.actionLabel}
+          </Button>
+
           <div className="flex flex-wrap gap-2">
             {VIEW_OPTIONS.map((option) => {
               const Icon = option.icon;
@@ -550,6 +647,7 @@ export default function Empresas() {
                 {vista === 'empresas' && (<><TableHead className="font-semibold">EMPRESA</TableHead><TableHead className="font-semibold">RUT</TableHead><TableHead className="font-semibold">CONTACTO</TableHead><TableHead className="font-semibold">CREADA</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'proyectos' && (<><TableHead className="font-semibold">PROYECTO</TableHead><TableHead className="font-semibold">MONEDA</TableHead><TableHead className="font-semibold">MONTO TOTAL</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'colaboradores' && (<><TableHead className="font-semibold">COLABORADOR</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">TELEFONO</TableHead><TableHead className="font-semibold">CARGO</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
+                {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead></>)}
                 {vista === 'categorias' && (<><TableHead className="font-semibold">CATEGORIA</TableHead><TableHead className="font-semibold">COLOR</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumento' && (<><TableHead className="font-semibold">TIPO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumentoProyecto' && (<><TableHead className="font-semibold">DOCUMENTO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
@@ -563,6 +661,7 @@ export default function Empresas() {
       {vista === 'empresas' && <EmpresaModal open={modalOpen} onClose={closeModal} onSave={handleSaveEmpresa} empresa={editingEmpresa} />}
       {vista === 'proyectos' && <ProyectoModal open={modalOpen} onClose={closeModal} onSave={handleSaveProyecto} proyecto={editingProyecto} />}
       {vista === 'colaboradores' && <ColaboradorModal open={modalOpen} onClose={closeModal} onSave={handleSaveColaborador} colaborador={editingColaborador} />}
+      {vista === 'usuarios' && <UserInviteModal open={modalOpen} onClose={closeModal} onSave={handleInviteUser} />}
       {vista === 'categorias' && <CategoriaModal open={modalOpen} onClose={closeModal} onSave={handleSaveCategoria} categoria={editingCategoria ? { id: editingCategoria.id, nombre: editingCategoria.nombre } : undefined} />}
       {vista === 'tiposDocumento' && <TipoDocumentoModal open={modalOpen} onClose={closeModal} onSave={handleSaveTipoDocumento} tipoDocumento={editingTipoDocumento} />}
       {vista === 'tiposDocumentoProyecto' && <TipoDocumentoProyectoModal open={modalOpen} onClose={closeModal} onSave={handleSaveTipoDocumentoProyecto} tipoDocumentoProyecto={editingTipoDocumentoProyecto} />}

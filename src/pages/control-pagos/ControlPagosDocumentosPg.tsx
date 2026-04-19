@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { DocumentoViewer } from "@/components/DocumentoViewer";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,7 +19,7 @@ import {
   type DocumentoProyectoRecordCreateInput,
   type TipoDocumentoProyectoOption,
 } from "@/services/postgresApi";
-import { Paperclip, Pencil, Search, Trash2 } from "lucide-react";
+import { FileText, Paperclip, Pencil, Search, Trash2 } from "lucide-react";
 
 interface DocumentoFormState {
   proyectoId: string;
@@ -26,6 +27,7 @@ interface DocumentoFormState {
   fechaDocumento: string;
   nroReferencia: string;
   observacion: string;
+  archivo: File | null;
 }
 
 const initialForm: DocumentoFormState = {
@@ -34,6 +36,7 @@ const initialForm: DocumentoFormState = {
   fechaDocumento: new Date().toISOString().split("T")[0],
   nroReferencia: "",
   observacion: "",
+  archivo: null,
 };
 
 function normalizeObservacion(value: string) {
@@ -56,6 +59,12 @@ export default function ControlPagosDocumentosPg() {
   const [editingDocumento, setEditingDocumento] = useState<DocumentoProyectoRecord | undefined>();
   const [form, setForm] = useState<DocumentoFormState>(initialForm);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -93,6 +102,14 @@ export default function ControlPagosDocumentosPg() {
       variant: "destructive",
     });
   }, [error]);
+
+  useEffect(() => {
+    return () => {
+      if (localPreviewUrl) {
+        URL.revokeObjectURL(localPreviewUrl);
+      }
+    };
+  }, [localPreviewUrl]);
 
   const activeTipos = useMemo(() => {
     return sortByNombre(tiposDocumentoProyecto.filter((item) => item.activo !== false));
@@ -142,15 +159,30 @@ export default function ControlPagosDocumentosPg() {
           || (item.nroReferencia || "").toLowerCase().includes(query)
           || (item.tipoDocumentoNombre || "").toLowerCase().includes(query)
           || projectName.toLowerCase().includes(query)
+          || (item.archivoAdjunto?.nombre || "").toLowerCase().includes(query)
         );
       })
-      .sort((a, b) => (b.fechaDocumento || "").localeCompare(a.fechaDocumento || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+      .sort(
+        (a, b) =>
+          (b.fechaDocumento || "").localeCompare(a.fechaDocumento || "")
+          || (b.createdAt || "").localeCompare(a.createdAt || ""),
+      );
   }, [documentosProyecto, projectFilter, resolveProjectName, search]);
 
-  const resetForm = () => {
+  const clearLocalPreview = useCallback(() => {
+    if (localPreviewUrl) {
+      URL.revokeObjectURL(localPreviewUrl);
+      setLocalPreviewUrl(null);
+    }
+  }, [localPreviewUrl]);
+
+  const resetForm = useCallback(() => {
+    clearLocalPreview();
     setForm(initialForm);
     setEditingDocumento(undefined);
-  };
+    setSelectedFile(undefined);
+    setFileInputKey((prev) => prev + 1);
+  }, [clearLocalPreview]);
 
   const openCreateModal = () => {
     resetForm();
@@ -158,6 +190,7 @@ export default function ControlPagosDocumentosPg() {
   };
 
   const openEditModal = (item: DocumentoProyectoRecord) => {
+    clearLocalPreview();
     setEditingDocumento(item);
     setForm({
       proyectoId: String(item.proyectoId),
@@ -165,8 +198,24 @@ export default function ControlPagosDocumentosPg() {
       fechaDocumento: item.fechaDocumento || new Date().toISOString().split("T")[0],
       nroReferencia: item.nroReferencia || "",
       observacion: normalizeObservacion(item.observacion || ""),
+      archivo: null,
     });
+    setFileInputKey((prev) => prev + 1);
     setModalOpen(true);
+  };
+
+  const openSelectedFilePreview = () => {
+    if (!form.archivo) return;
+
+    clearLocalPreview();
+    const previewUrl = URL.createObjectURL(form.archivo);
+    setLocalPreviewUrl(previewUrl);
+    setSelectedFile({
+      nombre: form.archivo.name,
+      url: previewUrl,
+      tipo: form.archivo.type || "application/octet-stream",
+    });
+    setViewerOpen(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -182,21 +231,34 @@ export default function ControlPagosDocumentosPg() {
       return;
     }
 
+    if (!form.archivo && !editingDocumento) {
+      toast({
+        title: "Archivo requerido",
+        description: "Debes adjuntar exactamente 1 archivo.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const payload: DocumentoProyectoRecordCreateInput = {
       proyectoId: form.proyectoId,
       tipoDocumentoProyectoId: form.tipoDocumentoProyectoId,
       fechaDocumento: form.fechaDocumento,
       nroReferencia: form.nroReferencia,
       observacion: normalizeObservacion(form.observacion),
+      archivo: form.archivo || undefined,
     };
 
+    setSaving(true);
     try {
       if (editingDocumento) {
         const updated = await postgresApi.updateDocumentoProyecto(editingDocumento.id, payload);
         setDocumentosProyecto((prev) => prev.map((item) => (item.id === editingDocumento.id ? updated : item)));
         toast({
           title: "Documento actualizado",
-          description: "Se actualizo correctamente.",
+          description: form.archivo
+            ? "Se actualizo correctamente y se reemplazo el archivo."
+            : "Se actualizo correctamente.",
           variant: "success",
         });
       } else {
@@ -217,6 +279,8 @@ export default function ControlPagosDocumentosPg() {
         description: saveError instanceof Error ? saveError.message : "No se pudo guardar el documento",
         variant: "destructive",
       });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -251,7 +315,7 @@ export default function ControlPagosDocumentosPg() {
       />
 
       <div className="mb-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm">
-        Los registros ya se guardan en PostgreSQL. La carga de archivos sigue pendiente y por ahora no forma parte del flujo.
+        Los registros y archivos de documentos de proyecto ya se guardan en PostgreSQL + Google Storage.
       </div>
 
       <div className="mb-4 grid gap-3 rounded-xl border bg-card p-4 shadow-sm sm:grid-cols-2">
@@ -261,7 +325,7 @@ export default function ControlPagosDocumentosPg() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
-            placeholder="Buscar por codigo, tipo o referencia..."
+            placeholder="Buscar por codigo, tipo, referencia o archivo..."
           />
         </div>
 
@@ -300,7 +364,18 @@ export default function ControlPagosDocumentosPg() {
                 <TableCell>{formatDateOnly(item.fechaDocumento)}</TableCell>
                 <TableCell>{item.nroReferencia || "-"}</TableCell>
                 <TableCell>
-                  {item.archivoAdjunto?.nombre || (
+                  {item.archivoAdjunto ? (
+                    <button
+                      className="flex items-center gap-2 text-primary underline-offset-4 hover:underline"
+                      onClick={() => {
+                        setSelectedFile(item.archivoAdjunto);
+                        setViewerOpen(true);
+                      }}
+                    >
+                      <FileText size={14} />
+                      {item.archivoAdjunto.nombre}
+                    </button>
+                  ) : (
                     <span className="text-muted-foreground">Pendiente</span>
                   )}
                 </TableCell>
@@ -315,7 +390,7 @@ export default function ControlPagosDocumentosPg() {
                       onClick={() =>
                         setDeleteTarget({
                           id: item.id,
-                          label: item.nroReferencia || item.tipoDocumentoNombre || "este documento",
+                          label: item.archivoAdjunto?.nombre || item.nroReferencia || item.tipoDocumentoNombre || "este documento",
                         })
                       }
                     >
@@ -350,6 +425,12 @@ export default function ControlPagosDocumentosPg() {
           </DialogHeader>
 
           <form className="space-y-4" onSubmit={handleSave}>
+            {editingDocumento && (
+              <p className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                Editando documento. El archivo actual se mantiene; puedes reemplazarlo opcionalmente.
+              </p>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="proyecto">Proyecto *</Label>
               <Select
@@ -372,37 +453,22 @@ export default function ControlPagosDocumentosPg() {
 
             <div className="space-y-2">
               <Label htmlFor="tipo">Tipo de Documento *</Label>
-              <div className="flex gap-2">
-                <Select
-                  value={form.tipoDocumentoProyectoId || undefined}
-                  onValueChange={(value) => setForm((prev) => ({ ...prev, tipoDocumentoProyectoId: value }))}
-                  required
-                >
-                  <SelectTrigger id="tipo" className="bg-card">
-                    <SelectValue placeholder="Seleccionar tipo de documento" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card">
-                    {activeTipos.map((item) => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.nombre}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 shrink-0"
-                  title="Carga de archivos pendiente"
-                  disabled
-                >
-                  <Paperclip size={18} />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                La carga de archivos todavia no esta habilitada. Este formulario guarda solo el registro.
-              </p>
+              <Select
+                value={form.tipoDocumentoProyectoId || undefined}
+                onValueChange={(value) => setForm((prev) => ({ ...prev, tipoDocumentoProyectoId: value }))}
+                required
+              >
+                <SelectTrigger id="tipo" className="bg-card">
+                  <SelectValue placeholder="Seleccionar tipo de documento" />
+                </SelectTrigger>
+                <SelectContent className="bg-card">
+                  {activeTipos.map((item) => (
+                    <SelectItem key={item.id} value={String(item.id)}>
+                      {item.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -429,6 +495,73 @@ export default function ControlPagosDocumentosPg() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="archivoDocumento">Archivo {!editingDocumento ? "*" : ""}</Label>
+              <input
+                ref={fileInputRef}
+                key={fileInputKey}
+                id="archivoDocumento"
+                type="file"
+                className="hidden"
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    archivo: e.target.files?.[0] || null,
+                  }))
+                }
+              />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                  title={editingDocumento ? "Reemplazar archivo" : "Adjuntar archivo"}
+                >
+                  <Paperclip size={18} />
+                </Button>
+              </div>
+              {form.archivo ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <div
+                    className="flex cursor-pointer items-center gap-2 rounded-md bg-muted px-2 py-1 text-sm hover:bg-muted/80"
+                    role="button"
+                    tabIndex={0}
+                    onClick={openSelectedFilePreview}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openSelectedFilePreview();
+                      }
+                    }}
+                  >
+                    <span className="truncate">{form.archivo.name}</span>
+                    <button
+                      type="button"
+                      className="leading-none text-muted-foreground hover:text-foreground"
+                      aria-label="Quitar archivo"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearLocalPreview();
+                        setSelectedFile(undefined);
+                        setForm((prev) => ({ ...prev, archivo: null }));
+                        setFileInputKey((prev) => prev + 1);
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {editingDocumento
+                    ? "Si no seleccionas un archivo nuevo, se mantiene el actual."
+                    : "Ningun archivo seleccionado."}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="observacion">Observacion</Label>
               <Textarea
                 id="observacion"
@@ -441,14 +574,25 @@ export default function ControlPagosDocumentosPg() {
             </div>
 
             <div className="flex justify-end gap-2 border-t pt-4">
-              <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => setModalOpen(false)} disabled={saving}>
                 Cancelar
               </Button>
-              <Button type="submit">Guardar</Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Guardando..." : "Guardar"}
+              </Button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
+
+      <DocumentoViewer
+        open={viewerOpen}
+        onClose={() => {
+          setViewerOpen(false);
+          setSelectedFile(undefined);
+        }}
+        archivo={selectedFile}
+      />
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}

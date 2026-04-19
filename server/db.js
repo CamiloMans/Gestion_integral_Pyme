@@ -1,7 +1,9 @@
 import 'dotenv/config';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
 
 const { Pool } = pg;
+const requestContextStorage = new AsyncLocalStorage();
 
 function createSslConfig() {
   if (process.env.PGSSLMODE !== 'require') {
@@ -28,7 +30,32 @@ export async function query(text, params = []) {
   return pool.query(text, params);
 }
 
+export function runWithRequestContext(context, callback) {
+  return requestContextStorage.run(context, callback);
+}
+
+export function getRequestContext() {
+  return requestContextStorage.getStore() || null;
+}
+
+export function mergeRequestContext(partialContext) {
+  const requestContext = requestContextStorage.getStore();
+
+  if (!requestContext) {
+    return null;
+  }
+
+  Object.assign(requestContext, partialContext);
+  return requestContext;
+}
+
 export async function getTenant() {
+  const requestContext = getRequestContext();
+
+  if (requestContext?.tenant) {
+    return requestContext.tenant;
+  }
+
   if (tenantCache) {
     return tenantCache;
   }

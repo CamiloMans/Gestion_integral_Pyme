@@ -1,8 +1,24 @@
 import { createRoot } from "react-dom/client";
 import { MsalProvider } from "@azure/msal-react";
+import { GoogleOAuthProvider } from "@react-oauth/google";
+import type { ReactNode } from "react";
 import { msalInstance } from "./lib/msalConfig";
 import App from "./App.tsx";
 import "./index.css";
+
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+
+function GoogleProviderWrapper({ children }: { children: ReactNode }) {
+  if (!googleClientId) {
+    return <>{children}</>;
+  }
+
+  return (
+    <GoogleOAuthProvider clientId={googleClientId}>
+      {children}
+    </GoogleOAuthProvider>
+  );
+}
 
 // Inicializar MSAL y manejar el callback de redirect después del login
 msalInstance.initialize().then(() => {
@@ -19,7 +35,9 @@ msalInstance.initialize().then(() => {
 });
 
 createRoot(document.getElementById("root")!).render(
-  <MsalProvider instance={msalInstance}>
-    <App />
-  </MsalProvider>
+  <GoogleProviderWrapper>
+    <MsalProvider instance={msalInstance}>
+      <App />
+    </MsalProvider>
+  </GoogleProviderWrapper>
 );

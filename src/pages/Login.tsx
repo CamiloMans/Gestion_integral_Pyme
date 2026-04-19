@@ -1,75 +1,150 @@
+import { GoogleLogin, type CredentialResponse } from '@react-oauth/google';
 import { useEffect, useState } from 'react';
-import { useSharePointAuth } from '@/hooks/useSharePoint';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { LogIn, Code } from 'lucide-react';
+import { useAppAuth } from '@/hooks/useAppAuth';
 
-const DEV_PASSWORD = 'Calen123?';
-const DEV_MODE_KEY = 'rekosol_dev_mode';
+const googleClientConfigured = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+const socialButtonClassName = 'relative h-12 w-full justify-center rounded-md border border-[#d1d1d1] bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-sm transition-all hover:border-[#b5b5b5] hover:bg-[#f7f7f7] hover:text-[#111111] focus-visible:ring-[#2563eb] disabled:border-[#d9d9d9] disabled:bg-[#f3f3f3] disabled:text-[#6b6b6b]';
+
+function MicrosoftMark() {
+  return (
+    <span aria-hidden="true" className="grid h-4 w-4 grid-cols-2 grid-rows-2 gap-[2px]">
+      <span className="bg-[#f25022]" />
+      <span className="bg-[#7fba00]" />
+      <span className="bg-[#00a4ef]" />
+      <span className="bg-[#ffb900]" />
+    </span>
+  );
+}
+
+function GoogleMark() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 18 18">
+      <path
+        d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z"
+        fill="#4285F4"
+      />
+      <path
+        d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18Z"
+        fill="#34A853"
+      />
+      <path
+        d="M3.97 10.72A5.41 5.41 0 0 1 3.69 9c0-.6.1-1.18.28-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.05l3.01-2.33Z"
+        fill="#FBBC05"
+      />
+      <path
+        d="M9 3.58c1.32 0 2.5.46 3.43 1.35l2.57-2.57C13.46.92 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33c.71-2.12 2.69-3.7 5.03-3.7Z"
+        fill="#EA4335"
+      />
+    </svg>
+  );
+}
 
 export default function Login() {
-  const { isAuthenticated, isLoading, login } = useSharePointAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const {
+    account,
+    clearError,
+    error,
+    exchangeGoogleCredential,
+    hasActiveTenant,
+    isAuthenticated,
+    isLoading,
+    loginWithMicrosoft,
+    logout,
+    selectTenant,
+    session,
+  } = useAppAuth();
   const [logoError, setLogoError] = useState(false);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [devPassword, setDevPassword] = useState('');
-  const [showDevMode, setShowDevMode] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [tenantSelectionInFlight, setTenantSelectionInFlight] = useState<string | null>(null);
+  const redirectPath = typeof location.state?.from === 'string' ? location.state.from : '/';
 
   useEffect(() => {
-    // Verificar si ya está en modo desarrollador
-    const devMode = localStorage.getItem(DEV_MODE_KEY);
-    if (devMode === 'true') {
-      // Si ya está en modo dev, no necesitamos hacer nada
-      // El componente App se encargará de permitir el acceso
+    if (isAuthenticated && hasActiveTenant) {
+      navigate(redirectPath, { replace: true });
     }
-  }, [isAuthenticated]);
+  }, [hasActiveTenant, isAuthenticated, navigate, redirectPath]);
 
-  const handleDevLogin = () => {
-    if (devPassword === DEV_PASSWORD) {
-      localStorage.setItem(DEV_MODE_KEY, 'true');
-      // Recargar la página para que App.tsx detecte el cambio
-      window.location.reload();
-    } else {
-      setLoginError('Contraseña de desarrollador incorrecta');
-      setDevPassword('');
-    }
-  };
+  async function handleMicrosoftLogin() {
+    setIsMicrosoftLoading(true);
+    setLocalError(null);
+    clearError();
 
-  const handleLogin = async () => {
-    setIsLoggingIn(true);
-    setLoginError(null);
-    
     try {
-      console.log('Iniciando proceso de login...');
-      // El login con redirect redirigirá la página, así que no esperamos la respuesta
-      await login();
-      // Si llegamos aquí, significa que el redirect no se ejecutó (no debería pasar)
-      console.log('Login completado (esto no debería aparecer con redirect)');
-    } catch (error: any) {
-      console.error('Error al iniciar sesión:', error);
-      const errorMessage = error?.message || 'Error desconocido al iniciar sesión';
-      setLoginError(errorMessage);
-      setIsLoggingIn(false);
+      await loginWithMicrosoft();
+    } catch (loginError) {
+      console.error('No se pudo iniciar el login de Microsoft:', loginError);
+      setLocalError('No se pudo iniciar el acceso con Microsoft.');
+      setIsMicrosoftLoading(false);
     }
-    // No ponemos setIsLoggingIn(false) en el finally porque con redirect la página se recargará
-  };
+  }
 
-  if (isLoading) {
+  async function handleGoogleSuccess(response: CredentialResponse) {
+    const credential = String(response.credential || '').trim();
+
+    if (!credential) {
+      setLocalError('Google no devolvio una credencial valida para iniciar sesion.');
+      setIsGoogleLoading(false);
+      return;
+    }
+
+    setIsGoogleLoading(true);
+    setLocalError(null);
+    clearError();
+
+    try {
+      await exchangeGoogleCredential(credential);
+    } catch (loginError) {
+      console.error('No se pudo iniciar el login de Google:', loginError);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  }
+
+  function handleGoogleError() {
+    setLocalError('No se pudo iniciar el login con Google.');
+    setIsGoogleLoading(false);
+  }
+
+  async function handleTenantSelection(tenantId: string) {
+    setTenantSelectionInFlight(tenantId);
+    setLocalError(null);
+    clearError();
+
+    try {
+      await selectTenant(tenantId);
+      navigate(redirectPath, { replace: true });
+    } catch (tenantError) {
+      console.error('No se pudo seleccionar el tenant activo:', tenantError);
+    } finally {
+      setTenantSelectionInFlight(null);
+    }
+  }
+
+  if (isLoading && !session) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-center">
           <div className="mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent"></div>
-          <p className="text-muted-foreground">Cargando...</p>
+          <p className="text-muted-foreground">Validando acceso...</p>
         </div>
       </div>
     );
   }
 
+  const requiresTenantSelection = Boolean(session && !session.activeTenantId);
+  const displayError = error || localError;
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background via-background to-muted p-4">
       <div className="w-full max-w-md space-y-8 rounded-xl border bg-card p-8 shadow-lg">
-        <div className="text-center space-y-4">
+        <div className="space-y-4 text-center">
           <div className="mx-auto flex h-24 w-24 items-center justify-center">
             {!logoError ? (
               <img
@@ -86,96 +161,146 @@ export default function Login() {
           </div>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">RekoSol</h1>
-            <p className="mt-2 text-muted-foreground">
-              Gestión de Gastos
-            </p>
+            <p className="mt-2 text-muted-foreground">Gestion de Gastos</p>
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="rounded-lg border bg-muted/50 p-4">
-            <p className="text-sm text-muted-foreground text-center">
-              Para acceder a la aplicación, necesitas iniciar sesión con tu cuenta de Microsoft.
-            </p>
+        {displayError && (
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+            <p className="text-center text-sm text-destructive">{displayError}</p>
           </div>
+        )}
 
-          {loginError && (
-            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3">
-              <p className="text-sm text-destructive text-center">
-                {loginError}
+        {requiresTenantSelection ? (
+          <div className="space-y-4">
+            <div className="rounded-lg border bg-muted/40 p-4 text-center">
+              <p className="font-medium">Selecciona el tenant con el que quieres trabajar</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Tu usuario tiene acceso a varios espacios. Elige uno para continuar.
               </p>
             </div>
-          )}
 
-          <Button
-            onClick={handleLogin}
-            className="w-full h-12 text-base"
-            size="lg"
-            disabled={isLoggingIn || isLoading}
-          >
-            {isLoggingIn ? (
-              <>
-                <div className="mr-2 h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent"></div>
-                Iniciando sesión...
-              </>
-            ) : (
-              <>
-                <LogIn className="mr-2 h-5 w-5" />
-                Iniciar sesión con Microsoft
-              </>
-            )}
-          </Button>
+            <div className="space-y-3">
+              {session.memberships.map((membership) => (
+                <Button
+                  key={membership.id}
+                  className="flex h-auto w-full items-start justify-between gap-3 px-4 py-4 text-left"
+                  disabled={tenantSelectionInFlight !== null}
+                  onClick={() => handleTenantSelection(membership.tenantId)}
+                  type="button"
+                  variant="outline"
+                >
+                  <span className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 h-5 w-5 text-muted-foreground" />
+                    <span className="flex flex-col">
+                      <span className="font-medium">{membership.tenant.nombre}</span>
+                      <span className="text-xs text-muted-foreground">{membership.tenant.slug}</span>
+                    </span>
+                  </span>
+                  <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {tenantSelectionInFlight === membership.tenantId ? 'Entrando...' : membership.rol}
+                  </span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-lg border bg-muted/50 p-4">
+              <p className="text-center text-sm text-muted-foreground">
+                Para acceder a la aplicacion, usa tu cuenta invitada con Microsoft o Google.
+              </p>
+            </div>
 
-          {/* Modo desarrollador */}
-          <div className="pt-4 border-t">
-            <button
+            <Button
+              className={socialButtonClassName}
+              disabled={isLoading || isMicrosoftLoading || isGoogleLoading}
+              onClick={handleMicrosoftLogin}
+              size="lg"
               type="button"
-              onClick={() => setShowDevMode(!showDevMode)}
-              className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              {showDevMode ? 'Ocultar' : 'Mostrar'} modo desarrollador
-            </button>
-            
-            {showDevMode && (
-              <div className="mt-3 space-y-3 rounded-lg border bg-muted/30 p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <Code className="h-4 w-4 text-muted-foreground" />
-                  <Label className="text-xs font-medium">Modo Desarrollador</Label>
-                </div>
-                <div className="space-y-2">
-                  <Input
-                    type="password"
-                    placeholder="Contraseña de desarrollador"
-                    value={devPassword}
-                    onChange={(e) => setDevPassword(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleDevLogin();
-                      }
-                    }}
-                    className="h-9 text-sm"
-                  />
-                  <Button
-                    onClick={handleDevLogin}
-                    variant="outline"
-                    size="sm"
-                    className="w-full h-9 text-xs"
+              <span className="absolute left-4 flex items-center justify-center">
+                {isMicrosoftLoading ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#5f5f5f] border-t-transparent" />
+                ) : (
+                  <MicrosoftMark />
+                )}
+              </span>
+
+              {isMicrosoftLoading ? (
+                'Redirigiendo a Microsoft...'
+              ) : (
+                'Iniciar sesion con Microsoft'
+              )}
+            </Button>
+
+            <div className="flex justify-center">
+              {googleClientConfigured ? (
+                <div className="relative h-12 w-full">
+                  <div
+                    aria-hidden="true"
+                    className={`${socialButtonClassName} pointer-events-none flex items-center ${
+                      isGoogleLoading ? 'opacity-70' : ''
+                    }`}
                   >
-                    Acceder como desarrollador
-                  </Button>
+                    <span className="absolute left-4 flex items-center justify-center">
+                      <GoogleMark />
+                    </span>
+                    Continuar con Google
+                  </div>
+
+                  <div className="absolute inset-0 z-10 overflow-hidden rounded-md [opacity:0.01]">
+                    <div
+                      className="h-[38px] origin-top-left [&>div]:!w-full [&_iframe]:!w-full"
+                      style={{ transform: 'scaleY(1.2632)' }}
+                    >
+                      <GoogleLogin
+                        onError={handleGoogleError}
+                        onSuccess={(response) => {
+                          void handleGoogleSuccess(response);
+                        }}
+                        shape="rectangular"
+                        size="large"
+                        text="continue_with"
+                        theme="outline"
+                        width="100%"
+                      />
+                    </div>
+                  </div>
+
+                  {isGoogleLoading && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center rounded-md bg-white/70">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#5f5f5f] border-t-transparent" />
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <Button className={socialButtonClassName} disabled type="button">
+                  Google no configurado
+                </Button>
+              )}
+            </div>
+
+            {!googleClientConfigured && (
+              <p className="text-center text-xs text-muted-foreground">
+                Falta configurar <code>VITE_GOOGLE_CLIENT_ID</code> para habilitar el acceso con Google.
+              </p>
+            )}
+
+            {account && (
+              <Button className="w-full" onClick={() => void logout()} type="button" variant="outline">
+                Salir de Microsoft
+              </Button>
             )}
           </div>
-        </div>
+        )}
 
         <div className="text-center">
           <p className="text-xs text-muted-foreground">
-            Al iniciar sesión, aceptas los términos de uso y políticas de privacidad.
+            El acceso se habilita por invitacion previa y queda restringido a tus tenants asignados.
           </p>
         </div>
       </div>
     </div>
   );
 }
-

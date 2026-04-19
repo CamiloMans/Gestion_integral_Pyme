@@ -102,3 +102,22 @@ Después de desplegar, verifica que:
 - Verifica que `VITE_SHAREPOINT_SITE_URL` sea la URL completa del sitio
 - Asegúrate de que tengas acceso al sitio de SharePoint
 
+## Google Login
+
+Para habilitar tambien el acceso con Google agrega esta variable de entorno:
+
+```env
+VITE_GOOGLE_CLIENT_ID=tu-google-client-id.apps.googleusercontent.com
+```
+
+Configuracion recomendada en Google Cloud Console:
+
+1. Crea un OAuth Client ID para tipo **Web application**.
+2. Agrega los **Authorized JavaScript Origins** de local y produccion.
+3. Usa solo identidad para login; no agregues scopes extra de Google APIs.
+
+Ejemplos de origins:
+
+- `http://localhost:3001`
+- `https://tu-app.onrender.com`
+

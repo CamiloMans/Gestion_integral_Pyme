@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
+import { ProyectoDocumentosModal } from "@/components/control-pagos/ProyectoDocumentosModal";
 import { ProyectoModal } from "@/components/ProyectoModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Proyecto } from "@/data/mockData";
 import { toast } from "@/hooks/use-toast";
 import { postgresApi } from "@/services/postgresApi";
-import { Pencil, Search, Trash2 } from "lucide-react";
+import { Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 function formatAmount(value?: number, moneda: "CLP" | "UF" | "USD" = "CLP") {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return "-";
@@ -39,6 +40,9 @@ export default function ControlPagosProyectos() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProyecto, setEditingProyecto] = useState<Proyecto | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; nombre: string } | null>(null);
+  const [documentosModalOpen, setDocumentosModalOpen] = useState(false);
+  const [documentosProyectoSeleccionado, setDocumentosProyectoSeleccionado] = useState<Proyecto | undefined>();
+  const [documentosModalMode, setDocumentosModalMode] = useState<"view" | "create">("view");
 
   const loadProyectos = useCallback(async () => {
     setLoading(true);
@@ -136,6 +140,12 @@ export default function ControlPagosProyectos() {
     }
   };
 
+  const openDocumentosModal = (proyecto: Proyecto, mode: "view" | "create") => {
+    setDocumentosProyectoSeleccionado(proyecto);
+    setDocumentosModalMode(mode);
+    setDocumentosModalOpen(true);
+  };
+
   return (
     <Layout>
       <PageHeader
@@ -152,7 +162,7 @@ export default function ControlPagosProyectos() {
 
       <div className="mb-4 rounded-xl border bg-card p-4 shadow-sm">
         <div className="mb-4 rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground">
-          Esta vista ya usa PostgreSQL solo para registros. La gestion de documentos queda pendiente para una etapa posterior.
+          Los proyectos ya se guardan en PostgreSQL y sus documentos ahora se administran desde esta misma vista o desde la pantalla Documentos.
         </div>
 
         <div className="relative">
@@ -174,6 +184,7 @@ export default function ControlPagosProyectos() {
               <TableHead>CODIGO</TableHead>
               <TableHead>MONTO TOTAL PROY</TableHead>
               <TableHead>MONEDA BASE</TableHead>
+              <TableHead className="text-center">DOCUMENTOS</TableHead>
               <TableHead className="text-center">ACCIONES</TableHead>
             </TableRow>
           </TableHeader>
@@ -184,6 +195,16 @@ export default function ControlPagosProyectos() {
                 <TableCell>{item.codigoProyecto || "-"}</TableCell>
                 <TableCell>{formatAmount(item.montoTotalProyecto, item.monedaBase || "CLP")}</TableCell>
                 <TableCell>{item.monedaBase || "-"}</TableCell>
+                <TableCell>
+                  <div className="flex justify-center gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => openDocumentosModal(item, "view")}>
+                      <Eye size={16} />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => openDocumentosModal(item, "create")}>
+                      <Plus size={16} />
+                    </Button>
+                  </div>
+                </TableCell>
                 <TableCell>
                   <div className="flex justify-center gap-1">
                     <Button
@@ -210,7 +231,7 @@ export default function ControlPagosProyectos() {
 
             {!loading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                   No hay proyectos para mostrar.
                 </TableCell>
               </TableRow>
@@ -227,6 +248,19 @@ export default function ControlPagosProyectos() {
         }}
         onSave={handleSave}
         proyecto={editingProyecto}
+      />
+
+      <ProyectoDocumentosModal
+        open={documentosModalOpen}
+        onOpenChange={(open) => {
+          setDocumentosModalOpen(open);
+          if (!open) {
+            setDocumentosProyectoSeleccionado(undefined);
+            setDocumentosModalMode("view");
+          }
+        }}
+        proyecto={documentosProyectoSeleccionado}
+        initialMode={documentosModalMode}
       />
 
       <ConfirmDialog

@@ -1,9 +1,9 @@
 import { ReactNode, useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Receipt, Settings, BarChart3, Plus, DollarSign, Menu, ChevronDown, Landmark } from 'lucide-react';
+import { Receipt, Settings, BarChart3, Plus, DollarSign, Menu, ChevronDown, Landmark, Clock3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { SharePointAuth } from '@/components/SharePointAuth';
+import { AppSessionMenu } from '@/components/AppSessionMenu';
 
 interface LayoutProps {
   children: ReactNode;
@@ -21,6 +21,8 @@ const controlPagosNavItems = [
   { path: '/control-pagos/documentos', label: 'Documentos', icon: Receipt },
   { path: '/control-pagos/hitos', label: 'Hitos', icon: BarChart3 },
 ];
+
+const asistenciaNavItem = { path: '/asistencia', label: 'Control de Asistencia', icon: Clock3 };
 
 export function Layout({ children, onNewGasto }: LayoutProps) {
   const location = useLocation();
@@ -121,6 +123,8 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
 
   const isGastosSectionActive = gastosNavItems.some((item) => item.path === location.pathname);
   const isControlPagosSectionActive = controlPagosNavItems.some((item) => item.path === location.pathname);
+  const isAsistenciaSectionActive = location.pathname === asistenciaNavItem.path;
+  const AsistenciaNavIcon = asistenciaNavItem.icon;
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -252,11 +256,25 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
                 })}
               </div>
             )}
+
+            <Link
+              to={asistenciaNavItem.path}
+              onClick={() => setMobileMenuOpen(false)}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-colors",
+                isAsistenciaSectionActive
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+              )}
+            >
+              <AsistenciaNavIcon size={20} />
+              <span className="flex-1 text-left">{asistenciaNavItem.label}</span>
+            </Link>
           </nav>
 
           {/* Authentication */}
           <div className="mt-8 pt-8 border-t border-sidebar-border">
-            <SharePointAuth />
+            <AppSessionMenu />
           </div>
         </div>
       </aside>

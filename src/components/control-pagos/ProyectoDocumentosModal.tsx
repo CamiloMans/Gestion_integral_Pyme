@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DocumentoViewer } from "@/components/DocumentoViewer";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useDocumentosProyecto, useTiposDocumentoProyecto } from "@/hooks/useSharePoint";
 import { toast } from "@/hooks/use-toast";
-import { formatDate, type Proyecto } from "@/data/mockData";
+import { formatDateOnly } from "@/lib/date-format";
+import {
+  postgresApi,
+  type DocumentoProyectoRecord,
+  type DocumentoProyectoRecordCreateInput,
+  type TipoDocumentoProyectoOption,
+} from "@/services/postgresApi";
+import type { Proyecto } from "@/data/mockData";
 import { Eye, FileText, MessageSquare, Paperclip, Pencil, Plus, Trash2 } from "lucide-react";
 
 type ModalMode = "view" | "create";
@@ -30,7 +36,7 @@ function toDateInputValue(value?: string) {
   if (!value) return todayIsoDate();
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const parsed = new Date(value);
-  if (isNaN(parsed.getTime())) return todayIsoDate();
+  if (Number.isNaN(parsed.getTime())) return todayIsoDate();
   return parsed.toISOString().split("T")[0];
 }
 
@@ -39,7 +45,7 @@ function parseDateToIso(value: string) {
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     const parsedIso = new Date(`${trimmed}T00:00:00`);
-    if (isNaN(parsedIso.getTime())) return null;
+    if (Number.isNaN(parsedIso.getTime())) return null;
     if (parsedIso.toISOString().split("T")[0] !== trimmed) return null;
     return trimmed;
   }
@@ -49,7 +55,7 @@ function parseDateToIso(value: string) {
   const [, day, month, year] = match;
   const iso = `${year}-${month}-${day}`;
   const parsed = new Date(`${iso}T00:00:00`);
-  if (isNaN(parsed.getTime())) return null;
+  if (Number.isNaN(parsed.getTime())) return null;
   if (parsed.toISOString().split("T")[0] !== iso) return null;
   return iso;
 }
@@ -58,24 +64,19 @@ function normalizeObservacion(value: string) {
   return value.toLocaleUpperCase("es-CL");
 }
 
+function sortByNombre<T extends { nombre: string }>(items: T[]) {
+  return [...items].sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
+}
+
 export function ProyectoDocumentosModal({
   open,
   onOpenChange,
   proyecto,
   initialMode = "view",
 }: ProyectoDocumentosModalProps) {
-  const { tiposDocumentoProyecto } = useTiposDocumentoProyecto();
-  const {
-    documentosProyecto,
-    loading,
-    loadDocumentosProyecto,
-    createDocumentoProyecto,
-    updateDocumentoProyecto,
-    deleteDocumentoProyecto,
-  } = useDocumentosProyecto({
-    autoLoad: false,
-  });
-
+  const [tiposDocumentoProyecto, setTiposDocumentoProyecto] = useState<TipoDocumentoProyectoOption[]>([]);
+  const [documentosProyecto, setDocumentosProyecto] = useState<DocumentoProyectoRecord[]>([]);
+  const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<ModalMode>(initialMode);
   const [tipoDocumentoProyectoId, setTipoDocumentoProyectoId] = useState("");
   const [fechaDocumento, setFechaDocumento] = useState(todayIsoDate());
@@ -97,13 +98,15 @@ export function ProyectoDocumentosModal({
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
 
   const activeTipos = useMemo(() => {
-    return [...tiposDocumentoProyecto]
-      .filter((item) => item.activo)
-      .sort((a, b) => (a.orden || 9999) - (b.orden || 9999));
+    return sortByNombre(tiposDocumentoProyecto.filter((item) => item.activo !== false));
   }, [tiposDocumentoProyecto]);
 
   const sortedDocumentos = useMemo(() => {
-    return [...documentosProyecto].sort((a, b) => (a.fechaDocumento || "").localeCompare(b.fechaDocumento || "") * -1);
+    return [...documentosProyecto].sort(
+      (a, b) =>
+        (b.fechaDocumento || "").localeCompare(a.fechaDocumento || "")
+        || (b.createdAt || "").localeCompare(a.createdAt || ""),
+    );
   }, [documentosProyecto]);
 
   const clearLocalPreview = () => {
@@ -124,7 +127,7 @@ export function ProyectoDocumentosModal({
     setFileInputKey((prev) => prev + 1);
   };
 
-  const openEdit = (item: (typeof documentosProyecto)[number]) => {
+  const openEdit = (item: DocumentoProyectoRecord) => {
     clearLocalPreview();
     setEditingDocumentoId(item.id);
     setTipoDocumentoProyectoId(String(item.tipoDocumentoProyectoId || ""));
@@ -138,6 +141,7 @@ export function ProyectoDocumentosModal({
 
   const openSelectedFilePreview = () => {
     if (!archivo) return;
+
     clearLocalPreview();
     const previewUrl = URL.createObjectURL(archivo);
     setLocalPreviewUrl(previewUrl);
@@ -149,23 +153,30 @@ export function ProyectoDocumentosModal({
     setViewerOpen(true);
   };
 
-  const getFilters = () => {
-    if (!proyecto) return undefined;
-    return {
-      proyectoId: String(proyecto.id),
-    };
-  };
-
   const loadCurrentProjectDocs = async () => {
-    if (!proyecto) return;
+    if (!proyecto?.id) return;
+
+    setLoading(true);
     try {
-      await loadDocumentosProyecto(getFilters());
+      const [configuracion, documentos] = await Promise.all([
+        postgresApi.getConfiguracion(),
+        postgresApi.getDocumentosProyecto(),
+      ]);
+
+      setTiposDocumentoProyecto(sortByNombre(configuracion.tiposDocumentoProyecto));
+      setDocumentosProyecto(
+        documentos.filter((item) => String(item.proyectoId) === String(proyecto.id)),
+      );
     } catch (error) {
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "No se pudieron cargar los documentos",
         variant: "destructive",
       });
+      setTiposDocumentoProyecto([]);
+      setDocumentosProyecto([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -174,7 +185,7 @@ export function ProyectoDocumentosModal({
 
     setMode(initialMode);
     resetForm();
-    loadCurrentProjectDocs();
+    void loadCurrentProjectDocs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialMode, proyecto?.id]);
 
@@ -228,7 +239,7 @@ export function ProyectoDocumentosModal({
     const fechaDocumentoIso = parseDateToIso(fechaDocumento);
     if (!fechaDocumentoIso) {
       toast({
-        title: "Fecha inválida",
+        title: "Fecha invalida",
         description: "Selecciona una fecha valida.",
         variant: "destructive",
       });
@@ -244,34 +255,28 @@ export function ProyectoDocumentosModal({
       return;
     }
 
+    const payload: DocumentoProyectoRecordCreateInput = {
+      proyectoId: String(proyecto.id),
+      tipoDocumentoProyectoId,
+      fechaDocumento: fechaDocumentoIso,
+      nroReferencia: nroReferencia.trim(),
+      observacion: normalizeObservacion(observacion.trim()),
+      archivo: archivo || undefined,
+    };
+
     setSaving(true);
     try {
       if (editingDocumentoId) {
-        await updateDocumentoProyecto(editingDocumentoId, {
-          proyectoId: String(proyecto.id),
-          codigoProyecto: "",
-          tipoDocumentoProyectoId,
-          fechaDocumento: fechaDocumentoIso,
-          nroReferencia: nroReferencia.trim(),
-          observacion: normalizeObservacion(observacion.trim()),
-        });
-
+        await postgresApi.updateDocumentoProyecto(editingDocumentoId, payload);
         toast({
           title: "Documento actualizado",
-          description: "Se guardaron los cambios correctamente.",
+          description: archivo
+            ? "Se guardaron los cambios y se reemplazo el archivo."
+            : "Se guardaron los cambios correctamente.",
           variant: "success",
         });
       } else {
-        await createDocumentoProyecto({
-          proyectoId: String(proyecto.id),
-          codigoProyecto: "",
-          tipoDocumentoProyectoId,
-          fechaDocumento: fechaDocumentoIso,
-          nroReferencia: nroReferencia.trim(),
-          observacion: normalizeObservacion(observacion.trim()),
-          archivo: archivo!,
-        });
-
+        await postgresApi.createDocumentoProyecto(payload);
         toast({
           title: "Documento creado",
           description: "Se agrego correctamente al proyecto.",
@@ -285,7 +290,7 @@ export function ProyectoDocumentosModal({
     } catch (error) {
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "No se pudo crear el documento",
+        description: error instanceof Error ? error.message : "No se pudo guardar el documento",
         variant: "destructive",
       });
     } finally {
@@ -297,7 +302,7 @@ export function ProyectoDocumentosModal({
     if (!deleteDocumentoId) return;
 
     try {
-      await deleteDocumentoProyecto(deleteDocumentoId);
+      await postgresApi.deleteDocumentoProyecto(deleteDocumentoId);
       toast({
         title: "Documento eliminado",
         description: "El documento se elimino correctamente.",
@@ -368,7 +373,7 @@ export function ProyectoDocumentosModal({
                   {sortedDocumentos.map((item) => (
                     <TableRow key={item.id}>
                       <TableCell>{item.tipoDocumentoNombre || "-"}</TableCell>
-                      <TableCell>{formatDate(item.fechaDocumento)}</TableCell>
+                      <TableCell>{formatDateOnly(item.fechaDocumento)}</TableCell>
                       <TableCell>
                         {item.archivoAdjunto ? (
                           <button
@@ -382,7 +387,7 @@ export function ProyectoDocumentosModal({
                             {item.archivoAdjunto.nombre}
                           </button>
                         ) : (
-                          "-"
+                          <span className="text-muted-foreground">Pendiente</span>
                         )}
                       </TableCell>
                       <TableCell>
@@ -437,8 +442,7 @@ export function ProyectoDocumentosModal({
             <form className="space-y-4" onSubmit={handleQuickCreate}>
               {editingDocumentoId && (
                 <p className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-                  Editando documento. El archivo actual se mantiene; puedes actualizar tipo, fecha, referencia y
-                  comentario.
+                  Editando documento. El archivo actual se mantiene; puedes reemplazarlo opcionalmente.
                 </p>
               )}
 
@@ -461,9 +465,6 @@ export function ProyectoDocumentosModal({
                       ))}
                     </SelectContent>
                   </Select>
-                  {activeTipos.length === 0 && (
-                    <p className="text-xs text-destructive">No hay tipos de documento activos disponibles.</p>
-                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -484,13 +485,13 @@ export function ProyectoDocumentosModal({
                   <Input
                     id="nroReferencia"
                     value={nroReferencia}
-                    onChange={(e) => setNroReferencia(e.target.value)}
+                    onChange={(e) => setNroReferencia(e.target.value.toUpperCase())}
                     placeholder="Ej: OC-12345"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="archivoDocumento">Archivo *</Label>
+                  <Label htmlFor="archivoDocumento">Archivo {!editingDocumentoId ? "*" : ""}</Label>
                   <input
                     ref={fileInputRef}
                     key={fileInputKey}
@@ -509,7 +510,7 @@ export function ProyectoDocumentosModal({
                       size="icon"
                       className="h-10 w-10 shrink-0"
                       onClick={() => fileInputRef.current?.click()}
-                      title="Adjuntar documentos"
+                      title={editingDocumentoId ? "Reemplazar archivo" : "Adjuntar documento"}
                     >
                       <Paperclip size={18} />
                     </Button>
@@ -546,7 +547,11 @@ export function ProyectoDocumentosModal({
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">Ningun archivo seleccionado.</p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {editingDocumentoId
+                        ? "Si no seleccionas un archivo nuevo, se mantiene el actual."
+                        : "Ningun archivo seleccionado."}
+                    </p>
                   )}
                 </div>
               </div>
@@ -619,7 +624,7 @@ export function ProyectoDocumentosModal({
           if (!open) setDeleteDocumentoId(null);
         }}
         title="Eliminar documento"
-        description="¿Seguro que deseas eliminar este documento? Esta acción no se puede deshacer."
+        description="¿Seguro que deseas eliminar este documento? Esta accion no se puede deshacer."
         onConfirm={confirmDelete}
         confirmText="Eliminar"
         cancelText="Cancelar"

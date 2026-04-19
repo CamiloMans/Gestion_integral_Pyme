@@ -17,6 +17,7 @@ dist-ssr
 .env.local
 .env.production
 upload-secret.txt
+.storage/
 
 # Editor directories and files
 .vscode/*

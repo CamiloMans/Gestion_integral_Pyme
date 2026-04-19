@@ -1,9 +1,51 @@
 import type { Colaborador, Empresa, Gasto, Proyecto } from '@/data/mockData';
 
+type AuthProvider = 'microsoft' | 'google';
+
 type TenantInfo = {
   id: string;
   slug: string;
   nombre: string;
+};
+
+type SessionUser = {
+  id: string;
+  email: string;
+  nombre: string;
+  authProvider?: AuthProvider | null;
+  authProviders?: AuthProvider[];
+};
+
+type TenantMembership = {
+  id: string;
+  tenantId: string;
+  rol: string;
+  estado: string;
+  tenant: TenantInfo;
+};
+
+type TenantUser = {
+  id: string;
+  membershipId: string;
+  tenantId: string;
+  email: string;
+  nombre: string;
+  authProvider?: AuthProvider | null;
+  authProviders: AuthProvider[];
+  authLinked: boolean;
+  invitationState: 'pendiente' | 'vinculado';
+  role: string;
+  estado: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type AppSession = {
+  user: SessionUser;
+  memberships: TenantMembership[];
+  activeTenantId: string | null;
+  activeTenant: TenantInfo | null;
+  role: string | null;
 };
 
 type CategoriaOption = {
@@ -29,6 +71,17 @@ type TipoDocumentoProyectoOption = {
   descripcion?: string;
   activo?: boolean;
   createdAt?: string;
+};
+
+type InviteUserInput = {
+  email: string;
+  nombre?: string;
+  role?: 'member' | 'admin';
+};
+
+type ExchangeAuthTokenInput = {
+  provider?: AuthProvider;
+  idToken: string;
 };
 
 type MonedaProyecto = 'CLP' | 'UF' | 'USD';
@@ -65,6 +118,20 @@ type DocumentoProyectoRecord = {
   };
 };
 
+type DocumentoHitoRecord = {
+  id: string;
+  hitoPagoId: string;
+  proyectoId: string;
+  codigoProyecto?: string;
+  nroHito: number;
+  createdAt?: string;
+  archivoAdjunto?: {
+    nombre: string;
+    url: string;
+    tipo: string;
+  };
+};
+
 type BootstrapResponse = {
   tenant: TenantInfo;
   empresas: Empresa[];
@@ -85,18 +152,81 @@ type CategoriaCreateInput = Omit<CategoriaOption, 'id'>;
 type TipoDocumentoCreateInput = Omit<TipoDocumentoOption, 'id' | 'createdAt' | 'tieneImpuestos' | 'valorImpuestos'>;
 type TipoDocumentoProyectoCreateInput = Omit<TipoDocumentoProyectoOption, 'id' | 'createdAt'>;
 type HitoPagoProyectoCreateInput = Omit<HitoPagoProyecto, 'id' | 'codigoProyecto' | 'createdAt'>;
-type DocumentoProyectoRecordCreateInput = Omit<DocumentoProyectoRecord, 'id' | 'codigoProyecto' | 'tipoDocumentoNombre' | 'createdAt' | 'archivoAdjunto'>;
+type DocumentoProyectoRecordCreateInput = Omit<DocumentoProyectoRecord, 'id' | 'codigoProyecto' | 'tipoDocumentoNombre' | 'createdAt' | 'archivoAdjunto'> & {
+  archivo?: File | null;
+};
+type DocumentoHitoRecordCreateInput = {
+  hitoPagoId: string;
+  archivo: File;
+};
 type GastoAttachmentInput = NonNullable<Gasto['archivosAdjuntos']>[number];
 type GastoMutationPayload = Omit<Gasto, 'id' | 'archivosAdjuntos'> & {
   archivosAdjuntos?: GastoAttachmentInput[];
   existingAttachmentIds?: string[];
 };
+type AsistenciaTipoRegistro = 'entrada' | 'salida';
+type AsistenciaRecord = {
+  id: string;
+  tenantId: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role?: string;
+  workDate: string;
+  status: 'abierta' | 'cerrada';
+  entradaAt: string;
+  entradaLatitude: number;
+  entradaLongitude: number;
+  entradaAccuracyMeters?: number;
+  salidaAt?: string;
+  salidaLatitude?: number;
+  salidaLongitude?: number;
+  salidaAccuracyMeters?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+type AsistenciaDashboardResponse = {
+  timeZone: string;
+  range: {
+    days: number;
+    startDate: string;
+    endDate: string;
+  };
+  summary: {
+    activeNow: number;
+    completedToday: number;
+    recordsInRange: number;
+    uniqueWorkersInRange: number;
+  };
+  currentUserOpenRecord: AsistenciaRecord | null;
+  users: TenantUser[];
+  records: AsistenciaRecord[];
+};
+type AsistenciaRegistroInput = {
+  tipo: AsistenciaTipoRegistro;
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number | null;
+};
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+class ApiError extends Error {
+  status: number;
+  details: unknown;
+
+  constructor(message: string, status: number, details?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.details = details ?? null;
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasFormDataBody = typeof FormData !== 'undefined' && init?.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: 'include',
     headers: {
       ...(hasFormDataBody ? {} : { 'Content-Type': 'application/json' }),
       ...(init?.headers || {}),
@@ -107,7 +237,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);
     const message = errorBody?.error || `Request fallida: ${response.status}`;
-    throw new Error(message);
+    throw new ApiError(message, response.status, errorBody);
   }
 
   if (response.status === 204) {
@@ -142,13 +272,87 @@ function buildGastoFormData(gasto: Omit<Gasto, 'id'>) {
   return formData;
 }
 
+function buildDocumentoProyectoFormData(documento: DocumentoProyectoRecordCreateInput) {
+  const formData = new FormData();
+  const payload = {
+    ...documento,
+    archivo: undefined,
+  };
+
+  formData.append('payload', JSON.stringify(payload));
+
+  if (documento.archivo instanceof File) {
+    formData.append('archivo', documento.archivo);
+  }
+
+  return formData;
+}
+
+function buildDocumentoHitoFormData(documento: DocumentoHitoRecordCreateInput) {
+  const formData = new FormData();
+  formData.append('payload', JSON.stringify({ hitoPagoId: documento.hitoPagoId }));
+  formData.append('archivo', documento.archivo);
+  return formData;
+}
+
 export const postgresApi = {
+  getSession() {
+    return request<AppSession>('/api/session');
+  },
+
+  exchangeAuthToken({ provider = 'microsoft', idToken }: ExchangeAuthTokenInput) {
+    return request<AppSession>('/api/auth/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ provider, idToken }),
+    });
+  },
+
+  setActiveTenant(tenantId: string) {
+    return request<AppSession>('/api/session/tenant', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId }),
+    });
+  },
+
+  logout() {
+    return request<void>('/api/auth/logout', {
+      method: 'POST',
+    });
+  },
+
   getBootstrap() {
     return request<BootstrapResponse>('/api/bootstrap');
   },
 
   getConfiguracion() {
     return request<ConfiguracionResponse>('/api/configuracion');
+  },
+
+  getUsuarios() {
+    return request<TenantUser[]>('/api/usuarios');
+  },
+
+  inviteUsuario(usuario: InviteUserInput) {
+    return request<TenantUser>('/api/usuarios', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: usuario.email,
+        nombre: usuario.nombre,
+        rol: usuario.role,
+      }),
+    });
+  },
+
+  getAsistenciaDashboard(days = 30) {
+    const searchParams = new URLSearchParams({ days: String(days) });
+    return request<AsistenciaDashboardResponse>(`/api/asistencia/dashboard?${searchParams.toString()}`);
+  },
+
+  registrarAsistencia(registro: AsistenciaRegistroInput) {
+    return request<AsistenciaRecord>('/api/asistencia/marcar', {
+      method: 'POST',
+      body: JSON.stringify(registro),
+    });
   },
 
   getGastos() {
@@ -306,19 +510,36 @@ export const postgresApi = {
   createDocumentoProyecto(documento: DocumentoProyectoRecordCreateInput) {
     return request<DocumentoProyectoRecord>('/api/control-pagos/documentos', {
       method: 'POST',
-      body: JSON.stringify(documento),
+      body: buildDocumentoProyectoFormData(documento),
     });
   },
 
   updateDocumentoProyecto(id: string, documento: DocumentoProyectoRecordCreateInput) {
     return request<DocumentoProyectoRecord>(`/api/control-pagos/documentos/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(documento),
+      body: buildDocumentoProyectoFormData(documento),
     });
   },
 
   deleteDocumentoProyecto(id: string) {
     return request<void>(`/api/control-pagos/documentos/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  getDocumentosHito() {
+    return request<DocumentoHitoRecord[]>('/api/control-pagos/documentos-hito');
+  },
+
+  createDocumentoHito(documento: DocumentoHitoRecordCreateInput) {
+    return request<DocumentoHitoRecord>('/api/control-pagos/documentos-hito', {
+      method: 'POST',
+      body: buildDocumentoHitoFormData(documento),
+    });
+  },
+
+  deleteDocumentoHito(id: string) {
+    return request<void>(`/api/control-pagos/documentos-hito/${id}`, {
       method: 'DELETE',
     });
   },
@@ -344,12 +565,17 @@ export const postgresApi = {
   },
 };
 
+export { ApiError };
+
 export type {
+  AppSession,
   BootstrapResponse,
   CategoriaCreateInput,
   CategoriaOption,
   ColaboradorCreateInput,
   ConfiguracionResponse,
+  DocumentoHitoRecord,
+  DocumentoHitoRecordCreateInput,
   DocumentoProyectoRecord,
   DocumentoProyectoRecordCreateInput,
   EmpresaCreateInput,
@@ -357,9 +583,19 @@ export type {
   HitoPagoProyectoCreateInput,
   MonedaProyecto,
   ProyectoCreateInput,
+  SessionUser,
   TenantInfo,
+  TenantMembership,
+  TenantUser,
   TipoDocumentoCreateInput,
   TipoDocumentoOption,
   TipoDocumentoProyectoCreateInput,
   TipoDocumentoProyectoOption,
+  InviteUserInput,
+  AuthProvider,
+  ExchangeAuthTokenInput,
+  AsistenciaDashboardResponse,
+  AsistenciaRecord,
+  AsistenciaRegistroInput,
+  AsistenciaTipoRegistro,
 };
