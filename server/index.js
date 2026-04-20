@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import multer from 'multer';
@@ -24,9 +25,15 @@ import {
   query,
   runWithRequestContext,
 } from './db.js';
+import {
+  ensureCoreSchema,
+  ensureDevSeedData,
+  getDevAuthBypassDetails,
+  isDevAuthBypassEnabled,
+} from './local-dev.js';
 
 const app = express();
-const port = Number(process.env.PORT || 3001);
+const preferredPort = Number(process.env.PORT || 3001);
 const isProduction = process.env.NODE_ENV === 'production';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,6 +75,56 @@ let controlPagosHitoDocumentosSchemaPromise = null;
 let documentosSchemaPromise = null;
 let gastoDocumentosSchemaPromise = null;
 let asistenciaSchemaPromise = null;
+
+function isValidPort(value) {
+  return Number.isInteger(value) && value > 0 && value < 65536;
+}
+
+async function canListenOnPort(port, host = '0.0.0.0') {
+  await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+
+    probe.once('error', (error) => {
+      probe.close(() => reject(error));
+    });
+
+    probe.once('listening', () => {
+      probe.close((closeError) => {
+        if (closeError) {
+          reject(closeError);
+          return;
+        }
+
+        resolve();
+      });
+    });
+
+    probe.listen(port, host);
+  });
+}
+
+async function resolveListenPort(basePort, host = '0.0.0.0') {
+  const searchLimit = Number(process.env.PORT_SEARCH_LIMIT || 20);
+  const normalizedBasePort = isValidPort(basePort) ? basePort : 3001;
+  const maxAttempts = Number.isInteger(searchLimit) && searchLimit > 0 ? searchLimit : 20;
+
+  for (let offset = 0; offset < maxAttempts; offset += 1) {
+    const candidatePort = normalizedBasePort + offset;
+
+    try {
+      await canListenOnPort(candidatePort, host);
+      return candidatePort;
+    } catch (error) {
+      if (error?.code !== 'EADDRINUSE') {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(
+    `No se encontro un puerto disponible desde ${normalizedBasePort} tras ${maxAttempts} intentos.`,
+  );
+}
 
 const gastoAttachmentsUpload = multer({
   storage: multer.memoryStorage(),
@@ -4158,6 +4215,10 @@ async function registerFrontend() {
 
 async function warmStartupDependencies() {
   try {
+    await ensureCoreSchema();
+    if (isDevAuthBypassEnabled()) {
+      await ensureDevSeedData();
+    }
     await ensureUserAuthIdentitiesSchema();
     await ensureControlPagosHitosSchema();
     await ensureControlPagosDocumentosSchema();
@@ -4171,6 +4232,23 @@ async function warmStartupDependencies() {
   }
 }
 
+async function primeDatabaseStartupState() {
+  try {
+    await ensureCoreSchema();
+
+    if (isDevAuthBypassEnabled()) {
+      await ensureDevSeedData();
+    }
+  } catch (error) {
+    console.error(
+      'No se pudo preparar el esquema base al arranque. Se intentara nuevamente al resolver la primera sesion o request.',
+      error,
+    );
+  }
+}
+
+await primeDatabaseStartupState();
+
 try {
   await registerFrontend();
 } catch (error) {
@@ -4179,9 +4257,15 @@ try {
 }
 
 const listenHost = process.env.HOST || '0.0.0.0';
+const port = await resolveListenPort(preferredPort, listenHost);
 
 const server = app.listen(port, listenHost, () => {
   console.log(`Servidor web + API escuchando en http://${listenHost}:${port}`);
+
+  if (port !== preferredPort) {
+    console.warn(`Puerto ${preferredPort} ocupado. Se uso automaticamente el puerto ${port}.`);
+  }
+
   console.log('Autenticacion habilitada: Microsoft + Google + sesiones HTTP + tenant por request');
   console.log(
     hasRemoteStorageConfig
@@ -4191,6 +4275,13 @@ const server = app.listen(port, listenHost, () => {
 
   if (hasPartialRemoteStorageConfig && !hasRemoteStorageConfig) {
     console.warn('Storage remoto incompleto: se usara almacenamiento local para los adjuntos.');
+  }
+
+  if (isDevAuthBypassEnabled()) {
+    const devAuthDetails = getDevAuthBypassDetails();
+    console.log(
+      `Sesion de desarrollo habilitada: ${devAuthDetails.userEmail} -> tenant ${devAuthDetails.tenantSlug}`,
+    );
   }
 
   void warmStartupDependencies();

@@ -15,6 +15,11 @@ function createSslConfig() {
   };
 }
 
+function readTimeout(name, fallback) {
+  const value = Number(process.env[name] || fallback);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 export const pool = new Pool({
   host: process.env.PGHOST,
   port: Number(process.env.PGPORT || 5432),
@@ -22,6 +27,7 @@ export const pool = new Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
   ssl: createSslConfig(),
+  connectionTimeoutMillis: readTimeout('PG_CONNECTION_TIMEOUT_MS', 5000),
 });
 
 let tenantCache = null;

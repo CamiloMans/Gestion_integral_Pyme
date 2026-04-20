@@ -1,6 +1,7 @@
 import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose';
 import { query } from './db.js';
+import { ensureCoreSchema, ensureDevSeedData, isDevAuthBypassEnabled } from './local-dev.js';
 
 const AUTH_PROVIDERS = Object.freeze({
   MICROSOFT: 'microsoft',
@@ -312,6 +313,7 @@ async function ensureUserAuthIdentitiesSchema() {
   }
 
   userAuthIdentitiesSchemaPromise = (async () => {
+    await ensureCoreSchema();
     await query(
       `
         create table if not exists user_auth_identities (
@@ -549,6 +551,20 @@ async function buildAppSessionForUser(userId, activeTenantId = null, authProvide
   return buildSessionResponse({ user, memberships, activeTenantId, authProvider });
 }
 
+async function buildDevBypassSession() {
+  if (!isDevAuthBypassEnabled()) {
+    return null;
+  }
+
+  const devSeed = await ensureDevSeedData();
+
+  if (!devSeed?.userId) {
+    return null;
+  }
+
+  return buildAppSessionForUser(devSeed.userId, devSeed.tenantId, null);
+}
+
 async function signSessionToken({ userId, activeTenantId, authProvider }) {
   return new SignJWT({
     activeTenantId: activeTenantId || null,
@@ -659,7 +675,7 @@ export async function resolveAppSessionFromRequest(req) {
   const sessionToken = cookies[SESSION_COOKIE_NAME];
 
   if (!sessionToken) {
-    return null;
+    return buildDevBypassSession();
   }
 
   try {
@@ -682,12 +698,12 @@ export async function resolveAppSessionFromRequest(req) {
     }
 
     if (!userId) {
-      return null;
+      return buildDevBypassSession();
     }
 
     return buildAppSessionForUser(userId, activeTenantId, authProvider);
   } catch (_error) {
-    return null;
+    return buildDevBypassSession();
   }
 }
 
