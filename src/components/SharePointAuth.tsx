@@ -14,6 +14,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "@/hooks/use-toast";
+import { authPostLogoutRedirectUri, authRedirectUri } from "@/lib/authClientConfig";
 import { msalInstance, loginRequest } from "@/lib/msalConfig";
 
 export function SharePointAuth() {
@@ -48,7 +49,7 @@ export function SharePointAuth() {
     setLoginError(null);
     try {
       console.log("Iniciando login redirect...");
-      console.log("Redirect URI:", window.location.origin);
+      console.log("Redirect URI:", authRedirectUri);
       console.log("Client ID:", clientId);
       console.log("Tenant ID:", tenantId);
       console.log("Scopes:", loginRequest.scopes);
@@ -57,7 +58,7 @@ export function SharePointAuth() {
       // Asegurarse de que solo se pasen los scopes de Graph, sin scopes estándar
       await instance.loginRedirect({
         scopes: loginRequest.scopes,
-        redirectUri: window.location.origin,
+        redirectUri: authRedirectUri,
       });
       // Con redirect, la página se redirigirá a Microsoft y luego volverá
       // No necesitamos hacer nada más aquí
@@ -76,7 +77,7 @@ export function SharePointAuth() {
   const handleLogout = async () => {
     try {
       await instance.logoutRedirect({
-        postLogoutRedirectUri: window.location.origin,
+        postLogoutRedirectUri: authPostLogoutRedirectUri,
       });
     } catch (error) {
       console.error("Error al cerrar sesión:", error);

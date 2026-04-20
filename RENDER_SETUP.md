@@ -9,6 +9,8 @@ La aplicación necesita las siguientes variables de entorno:
 1. **VITE_AZURE_CLIENT_ID**: ID de cliente de la aplicación registrada en Azure AD
 2. **VITE_AZURE_TENANT_ID**: ID del tenant de Azure AD
 3. **VITE_SHAREPOINT_SITE_URL**: URL completa del sitio de SharePoint
+4. **VITE_AUTH_REDIRECT_URI**: URL exacta que Microsoft usara para volver a la app
+5. **VITE_AUTH_POST_LOGOUT_REDIRECT_URI**: URL exacta para volver a la pantalla de login al cerrar sesion
 
 ## Cómo Configurar en Render
 
@@ -41,6 +43,8 @@ En la sección **"Environment"** del servicio, agrega las siguientes variables:
 VITE_AZURE_CLIENT_ID=tu-client-id-aqui
 VITE_AZURE_TENANT_ID=tu-tenant-id-aqui
 VITE_SHAREPOINT_SITE_URL=https://tu-tenant.sharepoint.com/sites/tu-sitio
+VITE_AUTH_REDIRECT_URI=https://tu-app.onrender.com
+VITE_AUTH_POST_LOGOUT_REDIRECT_URI=https://tu-app.onrender.com/login
 ```
 
 **Importante**: Reemplaza los valores con tus propios valores reales:
@@ -56,8 +60,13 @@ Después de desplegar en Render, necesitarás agregar la URL de producción a lo
 2. Navega a **Azure Active Directory** > **App registrations** > Tu aplicación
 3. Ve a **Authentication**
 4. En **Redirect URIs**, agrega:
-   - `https://tu-app.onrender.com` (o la URL que Render te haya asignado)
-   - `https://tu-app.onrender.com/` (con barra final)
+   - `https://tu-app.onrender.com`
+   - `https://tu-app.onrender.com/login`
+
+Si tu dominio actual es `https://gestion-integral-pyme.onrender.com`, entonces esas URIs deben quedar asi:
+
+- `https://gestion-integral-pyme.onrender.com`
+- `https://gestion-integral-pyme.onrender.com/login`
 
 ### Paso 6: Desplegar
 
@@ -101,7 +110,8 @@ Después de desplegar, verifica que:
 ### Error: "Redirect URI mismatch"
 
 - Verifica que hayas agregado la URL de Render a los Redirect URIs en Azure Portal
-- Asegúrate de que la URL sea exactamente la misma (con o sin barra final según lo configurado)
+- Asegúrate de que la URL sea exactamente la misma que envias desde la app
+- Si usas variables de entorno, revisa `VITE_AUTH_REDIRECT_URI` y `VITE_AUTH_POST_LOGOUT_REDIRECT_URI`
 
 ### Error: "No se pudo obtener el Site ID"
 
@@ -126,4 +136,8 @@ Ejemplos de origins:
 
 - `http://localhost:3001`
 - `https://tu-app.onrender.com`
+
+Si la app publica es `https://gestion-integral-pyme.onrender.com`, agrega exactamente este origin:
+
+- `https://gestion-integral-pyme.onrender.com`
 

@@ -2,11 +2,10 @@ import { createRoot } from "react-dom/client";
 import { MsalProvider } from "@azure/msal-react";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import type { ReactNode } from "react";
+import { googleClientId } from "./lib/authClientConfig";
 import { msalInstance } from "./lib/msalConfig";
 import App from "./App.tsx";
 import "./index.css";
-
-const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 function GoogleProviderWrapper({ children }: { children: ReactNode }) {
   if (!googleClientId) {

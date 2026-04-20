@@ -1,6 +1,7 @@
 import { useMsal } from '@azure/msal-react';
 import { googleLogout } from '@react-oauth/google';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { authPostLogoutRedirectUri, authRedirectUri } from '@/lib/authClientConfig';
 import { loginRequest } from '@/lib/msalConfig';
 import { ApiError, postgresApi, type AppSession } from '@/services/postgresApi';
 
@@ -153,7 +154,7 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
         const tokenResult = await instance.acquireTokenSilent({
           account,
           scopes: loginRequest.scopes,
-          redirectUri: window.location.origin,
+          redirectUri: authRedirectUri,
         });
         const nextSession = await postgresApi.exchangeAuthToken({
           provider: 'microsoft',
@@ -194,7 +195,7 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
     markMicrosoftLoginRequested();
     await instance.loginRedirect({
       ...loginRequest,
-      redirectUri: window.location.origin,
+      redirectUri: authRedirectUri,
     });
   }
 
@@ -220,7 +221,7 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
 
     if (currentAuthProvider === 'microsoft' || (!currentAuthProvider && account)) {
       await instance.logoutRedirect({
-        postLogoutRedirectUri: `${window.location.origin}/login`,
+        postLogoutRedirectUri: authPostLogoutRedirectUri,
       });
       return;
     }

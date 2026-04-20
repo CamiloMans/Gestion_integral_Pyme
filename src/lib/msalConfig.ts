@@ -1,4 +1,5 @@
 import { Configuration, PublicClientApplication } from "@azure/msal-browser";
+import { authRedirectUri } from "@/lib/authClientConfig";
 
 // Verificar configuración
 const clientId = import.meta.env.VITE_AZURE_CLIENT_ID || "";
@@ -13,7 +14,7 @@ export const msalConfig: Configuration = {
   auth: {
     clientId: clientId,
     authority: tenantId ? `https://login.microsoftonline.com/${tenantId}` : "https://login.microsoftonline.com/common",
-    redirectUri: window.location.origin,
+    redirectUri: authRedirectUri,
     // Asegurar que no se agreguen scopes automáticamente de manera incorrecta
     knownAuthorities: tenantId ? [`login.microsoftonline.com`] : [],
   },
@@ -41,4 +42,3 @@ export const graphScopes = [
 export const loginRequest = {
   scopes: graphScopes,
 };
-

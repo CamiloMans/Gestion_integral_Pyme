@@ -1,5 +1,6 @@
 import { useMsal } from "@azure/msal-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { authRedirectUri } from "@/lib/authClientConfig";
 import { loginRequest } from "@/lib/msalConfig";
 import type { Gasto, Empresa, Proyecto, Colaborador } from "@/data/mockData";
 import {
@@ -54,24 +55,24 @@ export function useSharePointAuth() {
       console.log("Intentando iniciar sesión...");
       console.log("Client ID:", import.meta.env.VITE_AZURE_CLIENT_ID ? "Configurado" : "FALTANTE");
       console.log("Tenant ID:", import.meta.env.VITE_AZURE_TENANT_ID ? "Configurado" : "FALTANTE");
-      console.log("Redirect URI:", window.location.origin);
+      console.log("Redirect URI:", authRedirectUri);
       
       // Usar redirect directamente ya que es más confiable
       // El popup puede ser bloqueado por el navegador
       await instance.loginRedirect({
         ...loginRequest,
-        redirectUri: window.location.origin,
+        redirectUri: authRedirectUri,
       });
       
       // Con redirect, la página se redirigirá a Microsoft y luego volverá
       // No necesitamos hacer nada más aquí, el handleRedirectPromise en main.tsx se encargará
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error al iniciar sesión:", error);
       
       // Manejar errores específicos
-      if (error.errorCode === "user_cancelled") {
+      if (typeof error === "object" && error !== null && "errorCode" in error && error.errorCode === "user_cancelled") {
         throw new Error("Inicio de sesión cancelado por el usuario");
-      } else if (error.message) {
+      } else if (error instanceof Error && error.message) {
         throw new Error(error.message);
       } else {
         throw new Error("Error desconocido al iniciar sesión. Revisa la consola para más detalles.");
