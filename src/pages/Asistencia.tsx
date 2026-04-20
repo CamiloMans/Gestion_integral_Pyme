@@ -3,6 +3,7 @@ import {
   Activity,
   CalendarDays,
   Clock3,
+  Download,
   Loader2,
   LogIn,
   LogOut,
@@ -11,6 +12,7 @@ import {
   Search,
   Users,
 } from 'lucide-react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { useAppAuth } from '@/hooks/useAppAuth';
@@ -20,6 +22,7 @@ import {
   type AsistenciaDashboardResponse,
   type AsistenciaRecord,
   type AsistenciaTipoRegistro,
+  type TenantUser,
 } from '@/services/postgresApi';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -29,29 +32,71 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 
 const RANGE_OPTIONS = [
   { value: '7', label: 'Ultimos 7 dias' },
   { value: '30', label: 'Ultimos 30 dias' },
   { value: '60', label: 'Ultimos 60 dias' },
 ];
+const TEAM_STATUS_OPTIONS = [
+  { value: 'all', label: 'Todos los estados' },
+  { value: 'working', label: 'En jornada' },
+  { value: 'closed-today', label: 'Salida registrada hoy' },
+  { value: 'no-mark-today', label: 'Sin marca hoy' },
+];
+const RECORD_STATUS_OPTIONS = [
+  { value: 'all', label: 'Todas las jornadas' },
+  { value: 'open', label: 'Jornadas abiertas' },
+  { value: 'closed', label: 'Jornadas cerradas' },
+];
 const EMPTY_RECORDS: AsistenciaRecord[] = [];
+const ASISTENCIA_PATHS = {
+  registro: '/asistencia/registro',
+  personal: '/asistencia/personal',
+} as const;
+
+type AsistenciaView = 'registro' | 'personal';
 type LocationPermissionState = PermissionState | 'checking' | 'unsupported' | 'insecure' | 'unknown';
 type LocationRequestAction = AsistenciaTipoRegistro | 'permission';
 type MobilePlatform = 'ios' | 'android' | 'other';
+type TeamStatusFilter = 'all' | 'working' | 'closed-today' | 'no-mark-today';
+type RecordStatusFilter = 'all' | 'open' | 'closed';
+type TeamStatusKey = Exclude<TeamStatusFilter, 'all'>;
 type LocationSnapshot = {
   latitude: number;
   longitude: number;
   accuracyMeters?: number;
   capturedAt: string;
 };
+type TeamStatusRow = {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  statusKey: TeamStatusKey;
+  statusLabel: string;
+  badgeVariant: 'default' | 'secondary' | 'outline';
+  todayRecord: AsistenciaRecord | null;
+  workedMinutes: number | null;
+};
 
-function formatDate(value?: string) {
-  if (!value) return '-';
+function parseDateValue(value?: string) {
+  if (!value) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day, 12, 0, 0);
+  }
 
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date;
+}
+
+function formatDate(value?: string) {
+  const date = parseDateValue(value);
+  if (!date) return '-';
 
   return new Intl.DateTimeFormat('es-CL', {
     day: '2-digit',
@@ -60,11 +105,20 @@ function formatDate(value?: string) {
   }).format(date);
 }
 
-function formatDateTime(value?: string) {
-  if (!value) return '-';
+function formatDateShort(value?: string) {
+  const date = parseDateValue(value);
+  if (!date) return '-';
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
+}
+
+function formatDateTime(value?: string) {
+  const date = parseDateValue(value);
+  if (!date) return '-';
 
   return new Intl.DateTimeFormat('es-CL', {
     day: '2-digit',
@@ -72,18 +126,18 @@ function formatDateTime(value?: string) {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   }).format(date);
 }
 
 function formatTime(value?: string) {
-  if (!value) return '-';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
+  const date = parseDateValue(value);
+  if (!date) return '-';
 
   return new Intl.DateTimeFormat('es-CL', {
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   }).format(date);
 }
 
@@ -101,6 +155,38 @@ function formatAccuracy(value?: number) {
   }
 
   return `precision +/- ${Math.round(value)} m`;
+}
+
+function formatDurationFromMinutes(minutes?: number | null) {
+  if (minutes === undefined || minutes === null || Number.isNaN(minutes) || minutes < 0) {
+    return '-';
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  return `${hours}h ${remainingMinutes.toString().padStart(2, '0')}m`;
+}
+
+function getWorkedMinutes(record: AsistenciaRecord | null) {
+  if (!record) return null;
+
+  const start = new Date(record.entradaAt).getTime();
+  const end = record.salidaAt ? new Date(record.salidaAt).getTime() : Date.now();
+
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
+    return null;
+  }
+
+  return Math.round((end - start) / 60000);
+}
+
+function getUserDisplayName(user: Pick<TenantUser, 'nombre' | 'email'> | Pick<AsistenciaRecord, 'userName' | 'userEmail'>) {
+  if ('nombre' in user) {
+    return user.nombre || user.email || 'Sin nombre';
+  }
+
+  return user.userName || user.userEmail || 'Sin nombre';
 }
 
 function getMobilePlatform(): MobilePlatform {
@@ -298,18 +384,7 @@ function getLocationHelpSteps(permissionState: LocationPermissionState, platform
 function getDurationLabel(record: AsistenciaRecord | null) {
   if (!record) return 'Sin jornada activa';
 
-  const start = new Date(record.entradaAt).getTime();
-  const end = record.salidaAt ? new Date(record.salidaAt).getTime() : Date.now();
-
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) {
-    return 'Duracion no disponible';
-  }
-
-  const totalMinutes = Math.round((end - start) / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  return `${hours}h ${minutes.toString().padStart(2, '0')}m`;
+  return formatDurationFromMinutes(getWorkedMinutes(record)) || 'Duracion no disponible';
 }
 
 function getRecordStatusLabel(record: AsistenciaRecord | null) {
@@ -403,86 +478,206 @@ async function requestCurrentLocation() {
   }
 }
 
+function buildTeamStatusRow(user: TenantUser, todayRecord: AsistenciaRecord | null): TeamStatusRow {
+  if (todayRecord && !todayRecord.salidaAt) {
+    return {
+      userId: user.id,
+      userName: getUserDisplayName(user),
+      userEmail: user.email,
+      statusKey: 'working',
+      statusLabel: 'En jornada',
+      badgeVariant: 'default',
+      todayRecord,
+      workedMinutes: getWorkedMinutes(todayRecord),
+    };
+  }
+
+  if (todayRecord?.salidaAt) {
+    return {
+      userId: user.id,
+      userName: getUserDisplayName(user),
+      userEmail: user.email,
+      statusKey: 'closed-today',
+      statusLabel: 'Salida registrada hoy',
+      badgeVariant: 'secondary',
+      todayRecord,
+      workedMinutes: getWorkedMinutes(todayRecord),
+    };
+  }
+
+  return {
+    userId: user.id,
+    userName: getUserDisplayName(user),
+    userEmail: user.email,
+    statusKey: 'no-mark-today',
+    statusLabel: 'Sin marca hoy',
+    badgeVariant: 'outline',
+    todayRecord: null,
+    workedMinutes: null,
+  };
+}
+
 function AttendanceTable({
   records,
   emptyMessage,
+  showWorkerColumn = true,
 }: {
   records: AsistenciaRecord[];
   emptyMessage: string;
+  showWorkerColumn?: boolean;
 }) {
+  const totalColumns = showWorkerColumn ? 7 : 6;
+
   return (
     <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/50">
-            <TableHead>TRABAJADOR</TableHead>
-            <TableHead>FECHA</TableHead>
-            <TableHead>ENTRADA</TableHead>
-            <TableHead>SALIDA</TableHead>
-            <TableHead>UBICACION</TableHead>
-            <TableHead>ESTADO</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {records.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-                {emptyMessage}
-              </TableCell>
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50">
+              {showWorkerColumn && <TableHead>TRABAJADOR</TableHead>}
+              <TableHead>FECHA</TableHead>
+              <TableHead>ENTRADA</TableHead>
+              <TableHead>SALIDA</TableHead>
+              <TableHead>HORAS TOTALES</TableHead>
+              <TableHead>UBICACION</TableHead>
+              <TableHead>ESTADO</TableHead>
             </TableRow>
-          ) : (
-            records.map((record) => (
-              <TableRow key={record.id} className={!record.salidaAt ? 'bg-sky-50/60' : undefined}>
-                <TableCell>
-                  <div>
-                    <p className="font-medium">{record.userName}</p>
-                    <p className="text-xs text-muted-foreground">{record.userEmail}</p>
-                  </div>
-                </TableCell>
-                <TableCell>{formatDate(record.workDate)}</TableCell>
-                <TableCell>
-                  <div>
-                    <p className="font-medium">{formatTime(record.entradaAt)}</p>
-                    <p className="text-xs text-muted-foreground">{formatDateTime(record.entradaAt)}</p>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div>
-                    <p className="font-medium">{formatTime(record.salidaAt)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {record.salidaAt ? formatDateTime(record.salidaAt) : 'Pendiente'}
-                    </p>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="space-y-2 text-xs text-muted-foreground">
-                    <div>
-                      <p className="font-medium text-foreground">Entrada</p>
-                      <p>{formatCoordinates(record.entradaLatitude, record.entradaLongitude)}</p>
-                      <p>{formatAccuracy(record.entradaAccuracyMeters)}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Salida</p>
-                      <p>{formatCoordinates(record.salidaLatitude, record.salidaLongitude)}</p>
-                      <p>{formatAccuracy(record.salidaAccuracyMeters)}</p>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={record.salidaAt ? 'secondary' : 'default'}>
-                    {record.salidaAt ? 'Cerrada' : 'Abierta'}
-                  </Badge>
+          </TableHeader>
+          <TableBody>
+            {records.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={totalColumns} className="py-10 text-center text-muted-foreground">
+                  {emptyMessage}
                 </TableCell>
               </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+            ) : (
+              records.map((record) => (
+                <TableRow key={record.id} className={!record.salidaAt ? 'bg-sky-50/60' : undefined}>
+                  {showWorkerColumn && (
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{record.userName}</p>
+                        <p className="text-xs text-muted-foreground">{record.userEmail}</p>
+                      </div>
+                    </TableCell>
+                  )}
+                  <TableCell>{formatDate(record.workDate)}</TableCell>
+                  <TableCell>
+                    <div>
+                      <p className="font-medium">{formatTime(record.entradaAt)}</p>
+                      <p className="text-xs text-muted-foreground">{formatDateTime(record.entradaAt)}</p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div>
+                      <p className="font-medium">{formatTime(record.salidaAt)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {record.salidaAt ? formatDateTime(record.salidaAt) : 'Pendiente'}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium">{formatDurationFromMinutes(getWorkedMinutes(record))}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {record.salidaAt ? 'Jornada cerrada' : 'Contando jornada abierta'}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-2 text-xs text-muted-foreground">
+                      <div>
+                        <p className="font-medium text-foreground">Entrada</p>
+                        <p>{formatCoordinates(record.entradaLatitude, record.entradaLongitude)}</p>
+                        <p>{formatAccuracy(record.entradaAccuracyMeters)}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">Salida</p>
+                        <p>{formatCoordinates(record.salidaLatitude, record.salidaLongitude)}</p>
+                        <p>{formatAccuracy(record.salidaAccuracyMeters)}</p>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={record.salidaAt ? 'secondary' : 'default'}>
+                      {record.salidaAt ? 'Cerrada' : 'Abierta'}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function TeamStatusTable({ rows, emptyMessage }: { rows: TeamStatusRow[]; emptyMessage: string }) {
+  return (
+    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50">
+              <TableHead>PERSONAL</TableHead>
+              <TableHead>ESTADO HOY</TableHead>
+              <TableHead>ENTRADA</TableHead>
+              <TableHead>SALIDA</TableHead>
+              <TableHead>HORAS HOY</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                  {emptyMessage}
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((row) => (
+                <TableRow key={row.userId}>
+                  <TableCell>
+                    <div>
+                      <p className="font-medium">{row.userName}</p>
+                      <p className="text-xs text-muted-foreground">{row.userEmail}</p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={row.badgeVariant}>{row.statusLabel}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div>
+                      <p className="font-medium">{formatTime(row.todayRecord?.entradaAt)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {row.todayRecord ? formatDate(row.todayRecord.workDate) : 'Sin marca'}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div>
+                      <p className="font-medium">{formatTime(row.todayRecord?.salidaAt)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {row.todayRecord?.salidaAt ? formatDateTime(row.todayRecord.salidaAt) : 'Pendiente'}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium">{formatDurationFromMinutes(row.workedMinutes)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {row.statusKey === 'working' ? 'Tiempo en curso' : row.statusKey === 'closed-today' ? 'Jornada cerrada' : 'Sin actividad hoy'}
+                    </p>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
 
 export default function Asistencia() {
+  const location = useLocation();
   const { session } = useAppAuth();
   const [dashboard, setDashboard] = useState<AsistenciaDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -493,11 +688,19 @@ export default function Asistencia() {
   const [locationPreview, setLocationPreview] = useState<LocationSnapshot | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('all');
+  const [teamStatusFilter, setTeamStatusFilter] = useState<TeamStatusFilter>('all');
+  const [recordStatusFilter, setRecordStatusFilter] = useState<RecordStatusFilter>('all');
+  const [exporting, setExporting] = useState(false);
 
   const isAdmin = session?.role === 'admin';
   const currentUserId = session?.user.id || '';
   const mobilePlatform = useMemo(() => getMobilePlatform(), []);
   const isLocationBusy = locationAction !== null;
+  const currentView: AsistenciaView = location.pathname === ASISTENCIA_PATHS.personal ? 'personal' : 'registro';
+  const needsRedirectToRegistro = location.pathname === '/asistencia' || (!isAdmin && location.pathname === ASISTENCIA_PATHS.personal);
+  const needsRedirectToKnownRoute = location.pathname !== '/asistencia'
+    && location.pathname !== ASISTENCIA_PATHS.registro
+    && location.pathname !== ASISTENCIA_PATHS.personal;
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -568,25 +771,71 @@ export default function Asistencia() {
   }, [refreshLocationPermissionState]);
 
   const records = dashboard?.records ?? EMPTY_RECORDS;
-  const myRecords = useMemo(
-    () => records.filter((record) => record.userId === currentUserId),
-    [currentUserId, records],
-  );
+  const recordsByUserId = useMemo(() => {
+    const nextMap = new Map<string, AsistenciaRecord[]>();
+
+    records.forEach((record) => {
+      const existing = nextMap.get(record.userId);
+      if (existing) {
+        existing.push(record);
+        return;
+      }
+
+      nextMap.set(record.userId, [record]);
+    });
+
+    return nextMap;
+  }, [records]);
+
+  const myRecords = recordsByUserId.get(currentUserId) ?? EMPTY_RECORDS;
   const currentUserOpenRecord = dashboard?.currentUserOpenRecord || null;
   const todayMyRecord = useMemo(() => {
     if (!dashboard) return null;
+
     return myRecords.find((record) => record.workDate === dashboard.range.endDate) || null;
   }, [dashboard, myRecords]);
   const latestMyClosedRecord = useMemo(
     () => myRecords.find((record) => Boolean(record.salidaAt)) || null,
     [myRecords],
   );
+  const myWorkedDaysCount = useMemo(
+    () => new Set(myRecords.map((record) => record.workDate)).size,
+    [myRecords],
+  );
 
-  const filteredTeamRecords = useMemo(() => {
+  const teamStatusRows = useMemo(() => {
+    if (!dashboard) return [];
+
+    return dashboard.users
+      .map((user) => {
+        const todayRecord = (recordsByUserId.get(user.id) || []).find((record) => record.workDate === dashboard.range.endDate) || null;
+        return buildTeamStatusRow(user, todayRecord);
+      })
+      .sort((left, right) => left.userName.localeCompare(right.userName, 'es', { sensitivity: 'base' }));
+  }, [dashboard, recordsByUserId]);
+
+  const teamSummary = useMemo(() => {
+    const activeNow = teamStatusRows.filter((row) => row.statusKey === 'working').length;
+    const completedToday = teamStatusRows.filter((row) => row.statusKey === 'closed-today').length;
+    const withoutMarkToday = teamStatusRows.filter((row) => row.statusKey === 'no-mark-today').length;
+
+    return {
+      activeNow,
+      completedToday,
+      withoutMarkToday,
+      activeWorkers: teamStatusRows.length,
+    };
+  }, [teamStatusRows]);
+
+  const filteredTeamStatusRows = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
 
-    return records.filter((record) => {
-      if (selectedUserId !== 'all' && record.userId !== selectedUserId) {
+    return teamStatusRows.filter((row) => {
+      if (selectedUserId !== 'all' && row.userId !== selectedUserId) {
+        return false;
+      }
+
+      if (teamStatusFilter !== 'all' && row.statusKey !== teamStatusFilter) {
         return false;
       }
 
@@ -594,13 +843,32 @@ export default function Asistencia() {
         return true;
       }
 
-      return (
-        record.userName.toLowerCase().includes(term)
-        || record.userEmail.toLowerCase().includes(term)
-        || record.workDate.toLowerCase().includes(term)
-      );
+      return row.userName.toLowerCase().includes(term) || row.userEmail.toLowerCase().includes(term);
     });
-  }, [records, searchTerm, selectedUserId]);
+  }, [searchTerm, selectedUserId, teamStatusFilter, teamStatusRows]);
+
+  const filteredUserIds = useMemo(
+    () => new Set(filteredTeamStatusRows.map((row) => row.userId)),
+    [filteredTeamStatusRows],
+  );
+
+  const filteredTeamRecords = useMemo(() => {
+    return records.filter((record) => {
+      if (!filteredUserIds.has(record.userId)) {
+        return false;
+      }
+
+      if (recordStatusFilter === 'open' && record.salidaAt) {
+        return false;
+      }
+
+      if (recordStatusFilter === 'closed' && !record.salidaAt) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [filteredUserIds, recordStatusFilter, records]);
 
   const locationStatusMeta = useMemo(
     () => getLocationStatusMeta(locationPermissionState),
@@ -612,28 +880,28 @@ export default function Asistencia() {
   );
 
   const captureCurrentLocation = useCallback(async () => {
-    const location = await requestCurrentLocation();
+    const position = await requestCurrentLocation();
 
     setLocationPreview({
-      latitude: location.latitude,
-      longitude: location.longitude,
-      accuracyMeters: location.accuracyMeters,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      accuracyMeters: position.accuracyMeters,
       capturedAt: new Date().toISOString(),
     });
     setLocationPermissionState('granted');
 
-    return location;
+    return position;
   }, []);
 
   const handlePrepareLocation = async () => {
     setLocationAction('permission');
 
     try {
-      const location = await captureCurrentLocation();
+      const position = await captureCurrentLocation();
 
       toast({
         title: 'Ubicacion lista',
-        description: `Se detecto ${formatCoordinates(location.latitude, location.longitude)} con ${formatAccuracy(location.accuracyMeters)}.`,
+        description: `Se detecto ${formatCoordinates(position.latitude, position.longitude)} con ${formatAccuracy(position.accuracyMeters)}.`,
         variant: 'success',
       });
     } catch (locationError) {
@@ -658,13 +926,13 @@ export default function Asistencia() {
     setLocationAction(tipo);
 
     try {
-      const location = await captureCurrentLocation();
+      const position = await captureCurrentLocation();
 
       await postgresApi.registrarAsistencia({
         tipo,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        accuracyMeters: location.accuracyMeters,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracyMeters: position.accuracyMeters,
       });
 
       toast({
@@ -692,11 +960,127 @@ export default function Asistencia() {
     }
   };
 
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setSelectedUserId('all');
+    setTeamStatusFilter('all');
+    setRecordStatusFilter('all');
+  };
+
+  const handleExportTeamReport = async () => {
+    if (!dashboard || filteredTeamRecords.length === 0) {
+      return;
+    }
+
+    setExporting(true);
+
+    try {
+      const XLSX = await import('xlsx');
+
+      const sortedRecords = [...filteredTeamRecords].sort((left, right) => {
+        const byName = getUserDisplayName(left).localeCompare(getUserDisplayName(right), 'es', { sensitivity: 'base' });
+        if (byName !== 0) return byName;
+
+        const byDate = left.workDate.localeCompare(right.workDate);
+        if (byDate !== 0) return byDate;
+
+        return left.entradaAt.localeCompare(right.entradaAt);
+      });
+
+      const detailRows = sortedRecords.map((record) => ({
+        Nombre: getUserDisplayName(record),
+        Dia: formatDateShort(record.workDate),
+        'Horario entrada': formatTime(record.entradaAt),
+        'Horario salida': record.salidaAt ? formatTime(record.salidaAt) : 'Pendiente',
+        'Horas totales': formatDurationFromMinutes(getWorkedMinutes(record)),
+      }));
+
+      const summaryMap = new Map<string, { nombre: string; dias: Set<string>; minutes: number }>();
+
+      sortedRecords.forEach((record) => {
+        const workedMinutes = getWorkedMinutes(record) || 0;
+        const existing = summaryMap.get(record.userId);
+
+        if (existing) {
+          existing.dias.add(record.workDate);
+          existing.minutes += workedMinutes;
+          return;
+        }
+
+        summaryMap.set(record.userId, {
+          nombre: getUserDisplayName(record),
+          dias: new Set([record.workDate]),
+          minutes: workedMinutes,
+        });
+      });
+
+      const consolidatedRows = Array.from(summaryMap.values())
+        .sort((left, right) => left.nombre.localeCompare(right.nombre, 'es', { sensitivity: 'base' }))
+        .map((row) => ({
+          Nombre: row.nombre,
+          'Dias trabajados': row.dias.size,
+          'Horas sumadas': formatDurationFromMinutes(row.minutes),
+        }));
+
+      const workbook = XLSX.utils.book_new();
+      const detailSheet = XLSX.utils.json_to_sheet(detailRows);
+      const consolidatedSheet = XLSX.utils.json_to_sheet(consolidatedRows);
+
+      detailSheet['!cols'] = [
+        { wch: 28 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 16 },
+      ];
+      consolidatedSheet['!cols'] = [
+        { wch: 28 },
+        { wch: 18 },
+        { wch: 16 },
+      ];
+
+      XLSX.utils.book_append_sheet(workbook, detailSheet, 'Detalle');
+      XLSX.utils.book_append_sheet(workbook, consolidatedSheet, 'Consolidado');
+
+      XLSX.writeFile(workbook, `asistencia-personal-${dashboard.range.startDate}-${dashboard.range.endDate}.xlsx`);
+
+      toast({
+        title: 'Excel generado',
+        description: `Se exportaron ${detailRows.length} registros y ${consolidatedRows.length} filas consolidadas.`,
+        variant: 'success',
+      });
+    } catch (exportError) {
+      const message = exportError instanceof Error ? exportError.message : 'No se pudo generar el Excel.';
+
+      toast({
+        title: 'Error al exportar',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const pageSubtitle = loading
-    ? 'Cargando jornada y registros del equipo...'
+    ? currentView === 'personal'
+      ? 'Cargando estado y registros del personal...'
+      : 'Cargando tu jornada y tus registros...'
     : dashboard
-      ? `${dashboard.summary.recordsInRange} registros en ${dashboard.range.days} dias`
+      ? currentView === 'personal'
+        ? `${filteredTeamStatusRows.length} personas visibles y ${filteredTeamRecords.length} registros en ${dashboard.range.days} dias`
+        : currentUserOpenRecord
+          ? `Tu jornada esta activa desde las ${formatTime(currentUserOpenRecord.entradaAt)}`
+          : `${myRecords.length} registros personales en ${dashboard.range.days} dias`
       : 'Sin datos de asistencia disponibles';
+
+  if (needsRedirectToKnownRoute) {
+    return <Navigate to={ASISTENCIA_PATHS.registro} replace />;
+  }
+
+  if (needsRedirectToRegistro) {
+    return <Navigate to={ASISTENCIA_PATHS.registro} replace />;
+  }
 
   return (
     <Layout>
@@ -717,262 +1101,239 @@ export default function Asistencia() {
         </div>
 
         <Button type="button" variant="outline" onClick={() => void loadDashboard()} disabled={loading}>
-          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Actualizar
         </Button>
       </PageHeader>
 
-      <div className="mb-6 grid gap-4 xl:grid-cols-[1.6fr,1fr]">
-        <Card className="overflow-hidden border-sky-100 bg-gradient-to-br from-sky-50 via-white to-cyan-50 shadow-sm">
-          <CardHeader className="pb-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <CardTitle className="text-2xl">Mi jornada</CardTitle>
-                <CardDescription>
-                  El registro se hace con la cuenta activa y usa la geolocalizacion del navegador.
-                </CardDescription>
-              </div>
-              <Badge variant={currentUserOpenRecord ? 'default' : 'secondary'}>
-                {getRecordStatusLabel(todayMyRecord || currentUserOpenRecord)}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {loading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-7 w-48" />
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-11 w-full" />
-              </div>
-            ) : (
-              <>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
-                    <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Trabajador</p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">{session?.user.nombre || 'Sin nombre'}</p>
-                    <p className="text-sm text-muted-foreground">{session?.user.email || 'Sin correo'}</p>
+      {currentView === 'registro' ? (
+        <div className="space-y-6">
+          <div className="grid gap-4 xl:grid-cols-[1.6fr,1fr]">
+            <Card className="overflow-hidden border-sky-100 bg-gradient-to-br from-sky-50 via-white to-cyan-50 shadow-sm">
+              <CardHeader className="pb-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <CardTitle className="text-2xl">Mi jornada</CardTitle>
+                    <CardDescription>
+                      Esta vista queda dedicada solo al registro individual con geolocalizacion.
+                    </CardDescription>
                   </div>
-                  <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
-                    <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Entrada</p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                      {currentUserOpenRecord ? formatTime(currentUserOpenRecord.entradaAt) : formatTime(todayMyRecord?.entradaAt)}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {currentUserOpenRecord
-                        ? formatDateTime(currentUserOpenRecord.entradaAt)
-                        : todayMyRecord
-                          ? formatDateTime(todayMyRecord.entradaAt)
-                          : 'Aun no registrada'}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
-                    <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Duracion</p>
-                    <p className="mt-2 text-lg font-semibold text-slate-900">{getDurationLabel(currentUserOpenRecord)}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {currentUserOpenRecord ? 'Contando hasta tu salida' : 'Se actualiza al cerrar la jornada'}
-                    </p>
-                  </div>
+                  <Badge variant={currentUserOpenRecord ? 'default' : 'secondary'}>
+                    {getRecordStatusLabel(todayMyRecord || currentUserOpenRecord)}
+                  </Badge>
                 </div>
-
-                <Alert className={locationStatusMeta.alertClassName}>
-                  <MapPin className="h-4 w-4" />
-                  <AlertTitle className="flex flex-wrap items-center gap-2">
-                    <span>{locationStatusMeta.title}</span>
-                    <Badge variant={locationStatusMeta.badgeVariant}>{locationStatusMeta.badgeLabel}</Badge>
-                  </AlertTitle>
-                  <AlertDescription>
-                    <div className="space-y-3">
-                      <p>{locationStatusMeta.description}</p>
-                      <p>
-                        Cada marca guarda latitud, longitud y precision estimada para respaldar la hora oficial de entrada y salida.
-                      </p>
-
-                      {locationPreview && (
-                        <p className="text-xs text-muted-foreground">
-                          Ultima lectura: {formatCoordinates(locationPreview.latitude, locationPreview.longitude)} con {formatAccuracy(locationPreview.accuracyMeters)} a las {formatDateTime(locationPreview.capturedAt)}.
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {loading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-7 w-48" />
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-11 w-full" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
+                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Trabajador</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">{session?.user.nombre || 'Sin nombre'}</p>
+                        <p className="text-sm text-muted-foreground">{session?.user.email || 'Sin correo'}</p>
+                      </div>
+                      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
+                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Entrada</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          {currentUserOpenRecord ? formatTime(currentUserOpenRecord.entradaAt) : formatTime(todayMyRecord?.entradaAt)}
                         </p>
-                      )}
+                        <p className="text-sm text-muted-foreground">
+                          {currentUserOpenRecord
+                            ? formatDateTime(currentUserOpenRecord.entradaAt)
+                            : todayMyRecord
+                              ? formatDateTime(todayMyRecord.entradaAt)
+                              : 'Aun no registrada'}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
+                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Duracion</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">{getDurationLabel(currentUserOpenRecord)}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {currentUserOpenRecord ? 'Contando hasta tu salida' : 'Se actualiza al cerrar la jornada'}
+                        </p>
+                      </div>
+                    </div>
 
-                      {(locationPermissionState === 'prompt'
-                        || locationPermissionState === 'unknown'
-                        || locationPermissionState === 'granted'
-                        || locationPermissionState === 'denied') && (
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            variant={locationPermissionState === 'granted' ? 'outline' : 'default'}
-                            onClick={() => void handlePrepareLocation()}
-                            disabled={isLocationBusy}
-                          >
-                            {locationAction === 'permission' ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <MapPin className="h-4 w-4" />
-                            )}
-                            {locationPermissionState === 'granted' ? 'Actualizar ubicacion' : 'Activar ubicacion'}
-                          </Button>
+                    <Alert className={locationStatusMeta.alertClassName}>
+                      <MapPin className="h-4 w-4" />
+                      <AlertTitle className="flex flex-wrap items-center gap-2">
+                        <span>{locationStatusMeta.title}</span>
+                        <Badge variant={locationStatusMeta.badgeVariant}>{locationStatusMeta.badgeLabel}</Badge>
+                      </AlertTitle>
+                      <AlertDescription>
+                        <div className="space-y-3">
+                          <p>{locationStatusMeta.description}</p>
+                          <p>
+                            Cada marca guarda latitud, longitud y precision estimada para respaldar la hora oficial de entrada y salida.
+                          </p>
 
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={() => void refreshLocationPermissionState()}
-                            disabled={isLocationBusy}
-                          >
-                            <RefreshCw className="h-4 w-4" />
-                            Revisar permiso
-                          </Button>
+                          {locationPreview && (
+                            <p className="text-xs text-muted-foreground">
+                              Ultima lectura: {formatCoordinates(locationPreview.latitude, locationPreview.longitude)} con {formatAccuracy(locationPreview.accuracyMeters)} a las {formatDateTime(locationPreview.capturedAt)}.
+                            </p>
+                          )}
+
+                          {(locationPermissionState === 'prompt'
+                            || locationPermissionState === 'unknown'
+                            || locationPermissionState === 'granted'
+                            || locationPermissionState === 'denied') && (
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant={locationPermissionState === 'granted' ? 'outline' : 'default'}
+                                onClick={() => void handlePrepareLocation()}
+                                disabled={isLocationBusy}
+                              >
+                                {locationAction === 'permission' ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <MapPin className="h-4 w-4" />
+                                )}
+                                {locationPermissionState === 'granted' ? 'Actualizar ubicacion' : 'Activar ubicacion'}
+                              </Button>
+
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => void refreshLocationPermissionState()}
+                                disabled={isLocationBusy}
+                              >
+                                <RefreshCw className="h-4 w-4" />
+                                Revisar permiso
+                              </Button>
+                            </div>
+                          )}
+
+                          {locationHelpSteps.length > 0 && (
+                            <div className="space-y-1 text-xs text-muted-foreground">
+                              {locationHelpSteps.map((step) => (
+                                <p key={step}>- {step}</p>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </AlertDescription>
+                    </Alert>
 
-                      {locationHelpSteps.length > 0 && (
-                        <div className="space-y-1 text-xs text-muted-foreground">
-                          {locationHelpSteps.map((step) => (
-                            <p key={step}>- {step}</p>
-                          ))}
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Button
+                        type="button"
+                        size="lg"
+                        className="h-auto min-h-14 justify-start gap-3 rounded-2xl"
+                        disabled={Boolean(currentUserOpenRecord) || isLocationBusy}
+                        onClick={() => void handleMark('entrada')}
+                      >
+                        {locationAction === 'entrada' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogIn className="h-5 w-5" />}
+                        <div className="text-left">
+                          <p className="font-semibold">Registrar entrada</p>
+                          <p className="text-xs text-primary-foreground/80">Captura hora actual y punto GPS</p>
                         </div>
-                      )}
-                    </div>
-                  </AlertDescription>
-                </Alert>
+                      </Button>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Button
-                    type="button"
-                    size="lg"
-                    className="h-auto min-h-14 justify-start gap-3 rounded-2xl"
-                    disabled={Boolean(currentUserOpenRecord) || isLocationBusy}
-                    onClick={() => void handleMark('entrada')}
-                  >
-                    {locationAction === 'entrada' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogIn className="h-5 w-5" />}
-                    <div className="text-left">
-                      <p className="font-semibold">Registrar entrada</p>
-                      <p className="text-xs text-primary-foreground/80">Captura hora actual y punto GPS</p>
+                      <Button
+                        type="button"
+                        size="lg"
+                        variant="outline"
+                        className="h-auto min-h-14 justify-start gap-3 rounded-2xl border-sky-200 bg-white"
+                        disabled={!currentUserOpenRecord || isLocationBusy}
+                        onClick={() => void handleMark('salida')}
+                      >
+                        {locationAction === 'salida' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogOut className="h-5 w-5" />}
+                        <div className="text-left">
+                          <p className="font-semibold">Registrar salida</p>
+                          <p className="text-xs text-muted-foreground">Cierra la jornada abierta y guarda tu ubicacion final</p>
+                        </div>
+                      </Button>
                     </div>
-                  </Button>
 
-                  <Button
-                    type="button"
-                    size="lg"
-                    variant="outline"
-                    className="h-auto min-h-14 justify-start gap-3 rounded-2xl border-sky-200 bg-white"
-                    disabled={!currentUserOpenRecord || isLocationBusy}
-                    onClick={() => void handleMark('salida')}
-                  >
-                    {locationAction === 'salida' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogOut className="h-5 w-5" />}
-                    <div className="text-left">
-                      <p className="font-semibold">Registrar salida</p>
-                      <p className="text-xs text-muted-foreground">Cierra la jornada abierta y guarda tu ubicacion final</p>
-                    </div>
-                  </Button>
-                </div>
-
-                {currentUserOpenRecord && (
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4">
-                    <div className="flex items-center gap-2 text-emerald-700">
-                      <Activity className="h-4 w-4" />
-                      <p className="font-medium">Jornada activa desde {formatTime(currentUserOpenRecord.entradaAt)}</p>
-                    </div>
-                    <p className="mt-2 text-sm text-emerald-900">
-                      Entrada registrada en {formatCoordinates(currentUserOpenRecord.entradaLatitude, currentUserOpenRecord.entradaLongitude)} con {formatAccuracy(currentUserOpenRecord.entradaAccuracyMeters)}.
-                    </p>
-                  </div>
+                    {currentUserOpenRecord && (
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4">
+                        <div className="flex items-center gap-2 text-emerald-700">
+                          <Activity className="h-4 w-4" />
+                          <p className="font-medium">Jornada activa desde {formatTime(currentUserOpenRecord.entradaAt)}</p>
+                        </div>
+                        <p className="mt-2 text-sm text-emerald-900">
+                          Entrada registrada en {formatCoordinates(currentUserOpenRecord.entradaLatitude, currentUserOpenRecord.entradaLongitude)} con {formatAccuracy(currentUserOpenRecord.entradaAccuracyMeters)}.
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-          <Card className="shadow-sm">
-            <CardContent className="p-5">
-              {loading ? (
-                <Skeleton className="h-16 w-full" />
-              ) : (
-                <div className="flex items-center gap-4">
-                  <div className="rounded-2xl bg-sky-100 p-3 text-sky-700">
-                    <Users className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Activos ahora</p>
-                    <p className="text-2xl font-bold">{dashboard?.summary.activeNow || 0}</p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
+              <Card className="shadow-sm">
+                <CardContent className="p-5">
+                  {loading ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : (
+                    <div className="flex items-center gap-4">
+                      <div className="rounded-2xl bg-sky-100 p-3 text-sky-700">
+                        <CalendarDays className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Mis registros en rango</p>
+                        <p className="text-2xl font-bold">{myRecords.length}</p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
-          <Card className="shadow-sm">
-            <CardContent className="p-5">
-              {loading ? (
-                <Skeleton className="h-16 w-full" />
-              ) : (
-                <div className="flex items-center gap-4">
-                  <div className="rounded-2xl bg-emerald-100 p-3 text-emerald-700">
-                    <Clock3 className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Salidas cerradas hoy</p>
-                    <p className="text-2xl font-bold">{dashboard?.summary.completedToday || 0}</p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              <Card className="shadow-sm">
+                <CardContent className="p-5">
+                  {loading ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : (
+                    <div className="flex items-center gap-4">
+                      <div className="rounded-2xl bg-emerald-100 p-3 text-emerald-700">
+                        <Users className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Dias trabajados</p>
+                        <p className="text-2xl font-bold">{myWorkedDaysCount}</p>
+                        <p className="text-xs text-muted-foreground">Dentro del rango seleccionado</p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
-          <Card className="shadow-sm">
-            <CardContent className="p-5">
-              {loading ? (
-                <Skeleton className="h-16 w-full" />
-              ) : (
-                <div className="flex items-center gap-4">
-                  <div className="rounded-2xl bg-amber-100 p-3 text-amber-700">
-                    <CalendarDays className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Trabajadores con marcas</p>
-                    <p className="text-2xl font-bold">{dashboard?.summary.uniqueWorkersInRange || 0}</p>
-                    <p className="text-xs text-muted-foreground">Dentro del rango seleccionado</p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              <Card className="shadow-sm">
+                <CardContent className="p-5">
+                  {loading ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : (
+                    <div className="flex items-center gap-4">
+                      <div className="rounded-2xl bg-violet-100 p-3 text-violet-700">
+                        <Clock3 className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Ultima salida</p>
+                        <p className="text-lg font-bold">
+                          {latestMyClosedRecord?.salidaAt ? formatTime(latestMyClosedRecord.salidaAt) : '-'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {latestMyClosedRecord?.salidaAt ? formatDate(latestMyClosedRecord.workDate) : 'Sin cierre reciente'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
 
-          <Card className="shadow-sm">
-            <CardContent className="p-5">
-              {loading ? (
-                <Skeleton className="h-16 w-full" />
-              ) : (
-                <div className="flex items-center gap-4">
-                  <div className="rounded-2xl bg-violet-100 p-3 text-violet-700">
-                    <MapPin className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Ultima salida propia</p>
-                    <p className="text-lg font-bold">
-                      {latestMyClosedRecord?.salidaAt ? formatTime(latestMyClosedRecord.salidaAt) : '-'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {latestMyClosedRecord?.salidaAt ? formatDate(latestMyClosedRecord.workDate) : 'Sin cierre reciente'}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <Tabs defaultValue="mi-historial" className="space-y-4">
-        <TabsList className={isAdmin ? 'grid w-full grid-cols-2 md:w-[360px]' : 'grid w-full grid-cols-1 md:w-[180px]'}>
-          <TabsTrigger value="mi-historial">Mi historial</TabsTrigger>
-          {isAdmin && <TabsTrigger value="equipo">Equipo</TabsTrigger>}
-        </TabsList>
-
-        <TabsContent value="mi-historial" className="space-y-4">
           <Card className="shadow-sm">
             <CardHeader>
-              <CardTitle className="text-lg">Mis ultimos registros</CardTitle>
+              <CardTitle className="text-lg">Mi historial reciente</CardTitle>
               <CardDescription>
                 Historico personal de entradas y salidas almacenadas para {session?.user.nombre || 'tu cuenta'}.
               </CardDescription>
@@ -981,56 +1342,200 @@ export default function Asistencia() {
               <AttendanceTable
                 records={myRecords}
                 emptyMessage="Aun no tienes registros de asistencia en el rango seleccionado."
+                showWorkerColumn={false}
               />
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {isAdmin && (
-          <TabsContent value="equipo" className="space-y-4">
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Card className="shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-lg">Control del equipo</CardTitle>
-                <CardDescription>
-                  Vista consolidada de los trabajadores del tenant usando los nombres de sus cuentas de acceso.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 lg:grid-cols-[1.2fr,0.8fr]">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={searchTerm}
-                      onChange={(event) => setSearchTerm(event.target.value)}
-                      className="pl-9"
-                      placeholder="Buscar por nombre, correo o fecha..."
-                    />
+              <CardContent className="p-5">
+                {loading ? (
+                  <Skeleton className="h-16 w-full" />
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+                      <Users className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Personal activo</p>
+                      <p className="text-2xl font-bold">{teamSummary.activeWorkers}</p>
+                    </div>
                   </div>
+                )}
+              </CardContent>
+            </Card>
 
-                  <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                    <SelectTrigger className="bg-card">
-                      <SelectValue placeholder="Filtrar trabajador" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos los trabajadores</SelectItem>
-                      {(dashboard?.users || []).map((user) => (
-                        <SelectItem key={user.id} value={user.id}>
-                          {user.nombre || user.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            <Card className="shadow-sm">
+              <CardContent className="p-5">
+                {loading ? (
+                  <Skeleton className="h-16 w-full" />
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <div className="rounded-2xl bg-sky-100 p-3 text-sky-700">
+                      <Activity className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">En jornada ahora</p>
+                      <p className="text-2xl font-bold">{teamSummary.activeNow}</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardContent className="p-5">
+                {loading ? (
+                  <Skeleton className="h-16 w-full" />
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <div className="rounded-2xl bg-emerald-100 p-3 text-emerald-700">
+                      <Clock3 className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Salida registrada hoy</p>
+                      <p className="text-2xl font-bold">{teamSummary.completedToday}</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardContent className="p-5">
+                {loading ? (
+                  <Skeleton className="h-16 w-full" />
+                ) : (
+                  <div className="flex items-center gap-4">
+                    <div className="rounded-2xl bg-amber-100 p-3 text-amber-700">
+                      <MapPin className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Sin marca hoy</p>
+                      <p className="text-2xl font-bold">{teamSummary.withoutMarkToday}</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-lg">Estado del personal</CardTitle>
+              <CardDescription>
+                Vista diaria del estado actual del equipo y detalle exportable dentro del rango seleccionado.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 xl:grid-cols-[1.2fr,0.8fr,0.9fr,0.9fr]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    className="pl-9"
+                    placeholder="Buscar por nombre o correo..."
+                  />
+                </div>
+
+                <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                  <SelectTrigger className="bg-card">
+                    <SelectValue placeholder="Filtrar trabajador" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todo el personal</SelectItem>
+                    {(dashboard?.users || []).map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {getUserDisplayName(user)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={teamStatusFilter} onValueChange={(value) => setTeamStatusFilter(value as TeamStatusFilter)}>
+                  <SelectTrigger className="bg-card">
+                    <SelectValue placeholder="Estado diario" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TEAM_STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={recordStatusFilter} onValueChange={(value) => setRecordStatusFilter(value as RecordStatusFilter)}>
+                  <SelectTrigger className="bg-card">
+                    <SelectValue placeholder="Estado de jornada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RECORD_STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {filteredTeamStatusRows.length} personas visibles y {filteredTeamRecords.length} registros exportables.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button type="button" variant="ghost" onClick={handleClearFilters}>
+                    Limpiar filtros
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleExportTeamReport()}
+                    disabled={loading || exporting || filteredTeamRecords.length === 0}
+                  >
+                    {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    Exportar Excel
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold">Estado de hoy</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Resume si cada trabajador esta en jornada, ya cerro su dia o aun no marca asistencia.
+                    </p>
+                  </div>
+                  <Badge variant="outline">{dashboard?.range.endDate ? formatDate(dashboard.range.endDate) : 'Hoy'}</Badge>
+                </div>
+
+                <TeamStatusTable
+                  rows={filteredTeamStatusRows}
+                  emptyMessage="No hay personal que coincida con los filtros actuales."
+                />
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-semibold">Detalle de asistencia</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Este mismo detalle se usa para generar el Excel con la hoja de detalle y la hoja consolidada.
+                  </p>
                 </div>
 
                 <AttendanceTable
                   records={filteredTeamRecords}
-                  emptyMessage="No hay registros de equipo que coincidan con los filtros actuales."
+                  emptyMessage="No hay registros de asistencia que coincidan con los filtros actuales."
                 />
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
-      </Tabs>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </Layout>
   );
 }

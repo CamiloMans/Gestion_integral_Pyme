@@ -31,7 +31,7 @@ const AppRoutes = () => {
         <Route path="/control-pagos/proyectos" element={<ControlPagosProyectos />} />
         <Route path="/control-pagos/documentos" element={<ControlPagosDocumentosPg />} />
         <Route path="/control-pagos/hitos" element={<ControlPagosHitos />} />
-        <Route path="/asistencia" element={<Asistencia />} />
+        <Route path="/asistencia/*" element={<Asistencia />} />
         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
         <Route path="*" element={<NotFound />} />
       </Route>
