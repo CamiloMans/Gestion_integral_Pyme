@@ -15,17 +15,23 @@ La aplicación necesita las siguientes variables de entorno:
 ### Paso 1: Crear un Nuevo Servicio
 
 1. Ve a tu dashboard de Render
-2. Haz clic en **"New +"** y selecciona **"Static Site"** (para aplicaciones React/Vite)
+2. Haz clic en **"New +"** y selecciona **"Web Service"**
+
+Importante:
+
+- Este proyecto no es un sitio estatico puro. Usa Vite para construir el frontend y `server/index.js` para servir la app y la API.
+- Si configuras el servicio manualmente, el comando de inicio debe ser `npm run server` o `npm start`.
+- No uses `npm run dev` en Render.
 
 ### Paso 2: Conectar el Repositorio
 
 1. Conecta tu repositorio de GitHub/GitLab
 2. Selecciona la rama que quieres desplegar (normalmente `main` o `master`)
 
-### Paso 3: Configurar el Build
+### Paso 3: Configurar Build e Inicio
 
 - **Build Command**: `npm install && npm run build`
-- **Publish Directory**: `dist`
+- **Start Command**: `npm run server`
 
 ### Paso 4: Configurar Variables de Entorno
 

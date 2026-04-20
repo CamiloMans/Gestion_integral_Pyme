@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch-path=server --watch-path=.env server/index.js",
+    "dev": "node scripts/run-server.mjs",
     "dev:client": "vite",
+    "start": "node server/index.js",
     "server": "node server/index.js",
     "build": "vite build",
     "build:dev": "vite build --mode development",
