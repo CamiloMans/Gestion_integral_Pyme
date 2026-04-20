@@ -4156,14 +4156,32 @@ async function registerFrontend() {
   });
 }
 
-await registerFrontend();
-await ensureUserAuthIdentitiesSchema();
-await ensureControlPagosHitosSchema();
-await ensureControlPagosDocumentosSchema();
-await ensureAsistenciaSchema();
+async function warmStartupDependencies() {
+  try {
+    await ensureUserAuthIdentitiesSchema();
+    await ensureControlPagosHitosSchema();
+    await ensureControlPagosDocumentosSchema();
+    await ensureAsistenciaSchema();
+    console.log('Inicializacion de esquemas completada correctamente.');
+  } catch (error) {
+    console.error(
+      'No se pudo completar la inicializacion de base de datos al arranque. Se reintentara bajo demanda.',
+      error,
+    );
+  }
+}
 
-const server = app.listen(port, () => {
-  console.log(`Servidor web + API escuchando en http://localhost:${port}`);
+try {
+  await registerFrontend();
+} catch (error) {
+  console.error('No se pudo registrar el frontend para produccion.', error);
+  process.exit(1);
+}
+
+const listenHost = process.env.HOST || '0.0.0.0';
+
+const server = app.listen(port, listenHost, () => {
+  console.log(`Servidor web + API escuchando en http://${listenHost}:${port}`);
   console.log('Autenticacion habilitada: Microsoft + Google + sesiones HTTP + tenant por request');
   console.log(
     hasRemoteStorageConfig
@@ -4174,6 +4192,13 @@ const server = app.listen(port, () => {
   if (hasPartialRemoteStorageConfig && !hasRemoteStorageConfig) {
     console.warn('Storage remoto incompleto: se usara almacenamiento local para los adjuntos.');
   }
+
+  void warmStartupDependencies();
+});
+
+server.on('error', (error) => {
+  console.error('Error al iniciar el servidor HTTP:', error);
+  process.exit(1);
 });
 
 const shutdown = async () => {
