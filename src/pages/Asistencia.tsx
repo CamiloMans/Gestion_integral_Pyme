@@ -37,6 +37,15 @@ const RANGE_OPTIONS = [
   { value: '60', label: 'Ultimos 60 dias' },
 ];
 const EMPTY_RECORDS: AsistenciaRecord[] = [];
+type LocationPermissionState = PermissionState | 'checking' | 'unsupported' | 'insecure' | 'unknown';
+type LocationRequestAction = AsistenciaTipoRegistro | 'permission';
+type MobilePlatform = 'ios' | 'android' | 'other';
+type LocationSnapshot = {
+  latitude: number;
+  longitude: number;
+  accuracyMeters?: number;
+  capturedAt: string;
+};
 
 function formatDate(value?: string) {
   if (!value) return '-';
@@ -94,6 +103,198 @@ function formatAccuracy(value?: number) {
   return `precision +/- ${Math.round(value)} m`;
 }
 
+function getMobilePlatform(): MobilePlatform {
+  if (typeof navigator === 'undefined') {
+    return 'other';
+  }
+
+  const userAgent = navigator.userAgent || '';
+  const isAppleTouchDevice = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+
+  if (/android/i.test(userAgent)) {
+    return 'android';
+  }
+
+  if (/iPad|iPhone|iPod/i.test(userAgent) || isAppleTouchDevice) {
+    return 'ios';
+  }
+
+  return 'other';
+}
+
+function getLocationAvailabilityState(): Extract<LocationPermissionState, 'unsupported' | 'insecure'> | null {
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    return 'insecure';
+  }
+
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    return 'unsupported';
+  }
+
+  return null;
+}
+
+function getLocationErrorState(error: unknown): LocationPermissionState | null {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = Number((error as { code?: number }).code);
+
+    if (code === 1) {
+      return 'denied';
+    }
+  }
+
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  const normalizedMessage = error.message.toLowerCase();
+
+  if (normalizedMessage.includes('https') || normalizedMessage.includes('secure context')) {
+    return 'insecure';
+  }
+
+  if (normalizedMessage.includes('no soporta geolocalizacion') || normalizedMessage.includes('not supported')) {
+    return 'unsupported';
+  }
+
+  if (
+    normalizedMessage.includes('permission')
+    || normalizedMessage.includes('denied')
+    || normalizedMessage.includes('not allowed')
+  ) {
+    return 'denied';
+  }
+
+  return null;
+}
+
+async function queryLocationPermissionState(): Promise<LocationPermissionState> {
+  const availabilityState = getLocationAvailabilityState();
+
+  if (availabilityState) {
+    return availabilityState;
+  }
+
+  if (!navigator.permissions?.query) {
+    return 'unknown';
+  }
+
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+    return status.state;
+  } catch (_error) {
+    return 'unknown';
+  }
+}
+
+function getLocationStatusMeta(permissionState: LocationPermissionState) {
+  switch (permissionState) {
+    case 'granted':
+      return {
+        badgeLabel: 'Permitida',
+        badgeVariant: 'default' as const,
+        title: 'Ubicacion lista para marcar',
+        description: 'El navegador ya puede leer tu posicion. Puedes registrar entrada o salida desde el celular sin volver a pedir permiso.',
+        alertClassName: 'border-emerald-200 bg-emerald-50/80',
+      };
+    case 'prompt':
+      return {
+        badgeLabel: 'Pendiente',
+        badgeVariant: 'secondary' as const,
+        title: 'Activa la ubicacion antes de marcar',
+        description: 'Toca el boton para que el navegador muestre el aviso de permiso y deje lista la geolocalizacion.',
+        alertClassName: 'border-sky-100 bg-white/80',
+      };
+    case 'denied':
+      return {
+        badgeLabel: 'Bloqueada',
+        badgeVariant: 'destructive' as const,
+        title: 'El navegador bloqueo la ubicacion',
+        description: 'Si ya negaste el permiso, el telefono normalmente no vuelve a mostrar el aviso hasta que lo habilites desde la configuracion del navegador o del sistema.',
+        alertClassName: 'border-rose-200 bg-rose-50/80',
+      };
+    case 'unsupported':
+      return {
+        badgeLabel: 'No disponible',
+        badgeVariant: 'outline' as const,
+        title: 'Este navegador no expone geolocalizacion',
+        description: 'Abre la app desde Safari, Chrome o Edge actualizado para poder registrar asistencia con ubicacion.',
+        alertClassName: 'border-amber-200 bg-amber-50/80',
+      };
+    case 'insecure':
+      return {
+        badgeLabel: 'Sin HTTPS',
+        badgeVariant: 'outline' as const,
+        title: 'La geolocalizacion requiere una conexion segura',
+        description: 'Abre la aplicacion usando HTTPS. En conexiones no seguras el navegador no mostrara el permiso.',
+        alertClassName: 'border-amber-200 bg-amber-50/80',
+      };
+    case 'checking':
+      return {
+        badgeLabel: 'Revisando',
+        badgeVariant: 'secondary' as const,
+        title: 'Comprobando permisos de ubicacion',
+        description: 'Estamos verificando si el navegador ya tiene acceso a tu posicion actual.',
+        alertClassName: 'border-slate-200 bg-slate-50/80',
+      };
+    case 'unknown':
+    default:
+      return {
+        badgeLabel: 'Por verificar',
+        badgeVariant: 'secondary' as const,
+        title: 'El navegador pedira la ubicacion al marcar',
+        description: 'Algunos navegadores moviles no informan el estado del permiso hasta que intentas obtener la ubicacion por primera vez.',
+        alertClassName: 'border-sky-100 bg-white/80',
+      };
+  }
+}
+
+function getLocationHelpSteps(permissionState: LocationPermissionState, platform: MobilePlatform) {
+  if (permissionState === 'denied') {
+    if (platform === 'ios') {
+      return [
+        'En iPhone o iPad abre Ajustes > Privacidad y seguridad > Localizacion y verifica que este activa.',
+        'Dentro de Localizacion habilita el navegador con el que abriste la app y permite el acceso mientras lo usas.',
+        'Si la ubicacion sale muy amplia, activa Ubicacion precisa para mejorar la exactitud del registro.',
+      ];
+    }
+
+    if (platform === 'android') {
+      return [
+        'En Chrome abre el menu > Configuracion > Configuracion del sitio > Ubicacion y permite el acceso para este sitio.',
+        'Si el telefono bloqueo a nivel sistema, ve a Ajustes > Apps > tu navegador > Permisos > Ubicacion.',
+        'Asegurate tambien de tener la ubicacion del telefono encendida antes de volver a la app.',
+      ];
+    }
+
+    return [
+      'Revisa los permisos del sitio en el navegador y habilita el acceso a la ubicacion.',
+      'Si el sistema del equipo tambien lo bloqueo, activa la ubicacion del navegador desde la configuracion del dispositivo.',
+    ];
+  }
+
+  if (permissionState === 'prompt' || permissionState === 'unknown') {
+    return [
+      'Toca "Activar ubicacion" para que el navegador muestre el aviso de permiso.',
+      'Acepta el acceso mientras usas la app y luego registra tu entrada o salida.',
+    ];
+  }
+
+  if (permissionState === 'granted') {
+    return [
+      'Si vas a marcar desde el celular, puedes actualizar la lectura antes de registrar para confirmar que el GPS respondio.',
+    ];
+  }
+
+  if (permissionState === 'insecure') {
+    return [
+      'Abre la aplicacion con una URL que empiece por https:// para que el navegador permita usar geolocalizacion.',
+    ];
+  }
+
+  return [];
+}
+
 function getDurationLabel(record: AsistenciaRecord | null) {
   if (!record) return 'Sin jornada activa';
 
@@ -133,12 +334,33 @@ function getGeolocationErrorMessage(error: unknown) {
     }
   }
 
-  return error instanceof Error ? error.message : 'No se pudo obtener la geolocalizacion actual.';
+  if (error instanceof Error) {
+    const normalizedMessage = error.message.toLowerCase();
+
+    if (normalizedMessage.includes('https') || normalizedMessage.includes('secure context')) {
+      return 'La geolocalizacion solo funciona cuando abres la app por HTTPS.';
+    }
+
+    if (normalizedMessage.includes('permission') || normalizedMessage.includes('denied') || normalizedMessage.includes('not allowed')) {
+      return 'El navegador o el telefono bloquearon la ubicacion. Revisa los permisos y vuelve a intentarlo.';
+    }
+
+    return error.message;
+  }
+
+  return 'No se pudo obtener la geolocalizacion actual.';
 }
 
-function requestCurrentLocation() {
+function createPositionRequest(options: PositionOptions) {
   return new Promise<{ latitude: number; longitude: number; accuracyMeters?: number }>((resolve, reject) => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    const availabilityState = getLocationAvailabilityState();
+
+    if (availabilityState === 'insecure') {
+      reject(new Error('La geolocalizacion solo funciona cuando abres la app por HTTPS.'));
+      return;
+    }
+
+    if (availabilityState === 'unsupported') {
       reject(new Error('Tu navegador no soporta geolocalizacion.'));
       return;
     }
@@ -152,13 +374,33 @@ function requestCurrentLocation() {
         });
       },
       (error) => reject(error),
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0,
-      },
+      options,
     );
   });
+}
+
+async function requestCurrentLocation() {
+  try {
+    return await createPositionRequest({
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0,
+    });
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      const code = Number((error as { code?: number }).code);
+
+      if (code === 2 || code === 3) {
+        return createPositionRequest({
+          enableHighAccuracy: false,
+          timeout: 10000,
+          maximumAge: 120000,
+        });
+      }
+    }
+
+    throw error;
+  }
 }
 
 function AttendanceTable({
@@ -246,12 +488,16 @@ export default function Asistencia() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rangeDays, setRangeDays] = useState('30');
-  const [markingType, setMarkingType] = useState<AsistenciaTipoRegistro | null>(null);
+  const [locationAction, setLocationAction] = useState<LocationRequestAction | null>(null);
+  const [locationPermissionState, setLocationPermissionState] = useState<LocationPermissionState>('checking');
+  const [locationPreview, setLocationPreview] = useState<LocationSnapshot | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('all');
 
   const isAdmin = session?.role === 'admin';
   const currentUserId = session?.user.id || '';
+  const mobilePlatform = useMemo(() => getMobilePlatform(), []);
+  const isLocationBusy = locationAction !== null;
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -293,6 +539,34 @@ export default function Asistencia() {
     }
   }, [dashboard, selectedUserId]);
 
+  const refreshLocationPermissionState = useCallback(async () => {
+    const nextState = await queryLocationPermissionState();
+    setLocationPermissionState(nextState);
+    return nextState;
+  }, []);
+
+  useEffect(() => {
+    void refreshLocationPermissionState();
+
+    const handleFocus = () => {
+      void refreshLocationPermissionState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshLocationPermissionState();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [refreshLocationPermissionState]);
+
   const records = dashboard?.records ?? EMPTY_RECORDS;
   const myRecords = useMemo(
     () => records.filter((record) => record.userId === currentUserId),
@@ -328,11 +602,63 @@ export default function Asistencia() {
     });
   }, [records, searchTerm, selectedUserId]);
 
-  const handleMark = async (tipo: AsistenciaTipoRegistro) => {
-    setMarkingType(tipo);
+  const locationStatusMeta = useMemo(
+    () => getLocationStatusMeta(locationPermissionState),
+    [locationPermissionState],
+  );
+  const locationHelpSteps = useMemo(
+    () => getLocationHelpSteps(locationPermissionState, mobilePlatform),
+    [locationPermissionState, mobilePlatform],
+  );
+
+  const captureCurrentLocation = useCallback(async () => {
+    const location = await requestCurrentLocation();
+
+    setLocationPreview({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      accuracyMeters: location.accuracyMeters,
+      capturedAt: new Date().toISOString(),
+    });
+    setLocationPermissionState('granted');
+
+    return location;
+  }, []);
+
+  const handlePrepareLocation = async () => {
+    setLocationAction('permission');
 
     try {
-      const location = await requestCurrentLocation();
+      const location = await captureCurrentLocation();
+
+      toast({
+        title: 'Ubicacion lista',
+        description: `Se detecto ${formatCoordinates(location.latitude, location.longitude)} con ${formatAccuracy(location.accuracyMeters)}.`,
+        variant: 'success',
+      });
+    } catch (locationError) {
+      const nextState = getLocationErrorState(locationError);
+
+      if (nextState) {
+        setLocationPermissionState(nextState);
+      }
+
+      toast({
+        title: 'No se pudo activar la ubicacion',
+        description: getGeolocationErrorMessage(locationError),
+        variant: 'destructive',
+      });
+    } finally {
+      await refreshLocationPermissionState();
+      setLocationAction(null);
+    }
+  };
+
+  const handleMark = async (tipo: AsistenciaTipoRegistro) => {
+    setLocationAction(tipo);
+
+    try {
+      const location = await captureCurrentLocation();
 
       await postgresApi.registrarAsistencia({
         tipo,
@@ -349,13 +675,20 @@ export default function Asistencia() {
 
       await loadDashboard();
     } catch (markError) {
+      const nextState = getLocationErrorState(markError);
+
+      if (nextState) {
+        setLocationPermissionState(nextState);
+      }
+
       toast({
         title: 'No se pudo registrar',
         description: getGeolocationErrorMessage(markError),
         variant: 'destructive',
       });
     } finally {
-      setMarkingType(null);
+      await refreshLocationPermissionState();
+      setLocationAction(null);
     }
   };
 
@@ -441,11 +774,64 @@ export default function Asistencia() {
                   </div>
                 </div>
 
-                <Alert className="border-sky-100 bg-white/80">
+                <Alert className={locationStatusMeta.alertClassName}>
                   <MapPin className="h-4 w-4" />
-                  <AlertTitle>Geolocalizacion requerida</AlertTitle>
+                  <AlertTitle className="flex flex-wrap items-center gap-2">
+                    <span>{locationStatusMeta.title}</span>
+                    <Badge variant={locationStatusMeta.badgeVariant}>{locationStatusMeta.badgeLabel}</Badge>
+                  </AlertTitle>
                   <AlertDescription>
-                    Cada marca guarda latitud, longitud y precision estimada para respaldar la hora oficial de entrada y salida.
+                    <div className="space-y-3">
+                      <p>{locationStatusMeta.description}</p>
+                      <p>
+                        Cada marca guarda latitud, longitud y precision estimada para respaldar la hora oficial de entrada y salida.
+                      </p>
+
+                      {locationPreview && (
+                        <p className="text-xs text-muted-foreground">
+                          Ultima lectura: {formatCoordinates(locationPreview.latitude, locationPreview.longitude)} con {formatAccuracy(locationPreview.accuracyMeters)} a las {formatDateTime(locationPreview.capturedAt)}.
+                        </p>
+                      )}
+
+                      {(locationPermissionState === 'prompt'
+                        || locationPermissionState === 'unknown'
+                        || locationPermissionState === 'granted'
+                        || locationPermissionState === 'denied') && (
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant={locationPermissionState === 'granted' ? 'outline' : 'default'}
+                            onClick={() => void handlePrepareLocation()}
+                            disabled={isLocationBusy}
+                          >
+                            {locationAction === 'permission' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MapPin className="h-4 w-4" />
+                            )}
+                            {locationPermissionState === 'granted' ? 'Actualizar ubicacion' : 'Activar ubicacion'}
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => void refreshLocationPermissionState()}
+                            disabled={isLocationBusy}
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                            Revisar permiso
+                          </Button>
+                        </div>
+                      )}
+
+                      {locationHelpSteps.length > 0 && (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          {locationHelpSteps.map((step) => (
+                            <p key={step}>- {step}</p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </AlertDescription>
                 </Alert>
 
@@ -454,10 +840,10 @@ export default function Asistencia() {
                     type="button"
                     size="lg"
                     className="h-auto min-h-14 justify-start gap-3 rounded-2xl"
-                    disabled={Boolean(currentUserOpenRecord) || markingType !== null}
+                    disabled={Boolean(currentUserOpenRecord) || isLocationBusy}
                     onClick={() => void handleMark('entrada')}
                   >
-                    {markingType === 'entrada' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogIn className="h-5 w-5" />}
+                    {locationAction === 'entrada' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogIn className="h-5 w-5" />}
                     <div className="text-left">
                       <p className="font-semibold">Registrar entrada</p>
                       <p className="text-xs text-primary-foreground/80">Captura hora actual y punto GPS</p>
@@ -469,10 +855,10 @@ export default function Asistencia() {
                     size="lg"
                     variant="outline"
                     className="h-auto min-h-14 justify-start gap-3 rounded-2xl border-sky-200 bg-white"
-                    disabled={!currentUserOpenRecord || markingType !== null}
+                    disabled={!currentUserOpenRecord || isLocationBusy}
                     onClick={() => void handleMark('salida')}
                   >
-                    {markingType === 'salida' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogOut className="h-5 w-5" />}
+                    {locationAction === 'salida' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogOut className="h-5 w-5" />}
                     <div className="text-left">
                       <p className="font-semibold">Registrar salida</p>
                       <p className="text-xs text-muted-foreground">Cierra la jornada abierta y guarda tu ubicacion final</p>

@@ -1,143 +1,159 @@
-# Configuración para Render
+# Configuracion para Render
 
-Esta guía explica cómo configurar las variables de entorno en Render para desplegar la aplicación.
+Esta guia explica como desplegar la aplicacion en Render y que variables de entorno debes definir para que el frontend, la API y el login funcionen correctamente.
 
-## Variables de Entorno Requeridas
+## Tipo de servicio
 
-La aplicación necesita las siguientes variables de entorno:
+Este proyecto debe desplegarse como `Web Service`.
 
-1. **VITE_AZURE_CLIENT_ID**: ID de cliente de la aplicación registrada en Azure AD
-2. **VITE_AZURE_TENANT_ID**: ID del tenant de Azure AD
-3. **VITE_SHAREPOINT_SITE_URL**: URL completa del sitio de SharePoint
-4. **VITE_AUTH_REDIRECT_URI**: URL exacta que Microsoft usara para volver a la app
-5. **VITE_AUTH_POST_LOGOUT_REDIRECT_URI**: URL exacta para volver a la pantalla de login al cerrar sesion
+No lo despliegues como `Static Site`, porque la aplicacion necesita ejecutar `server/index.js` para:
 
-## Cómo Configurar en Render
+- servir el frontend construido con Vite
+- exponer la API en `/api/*`
+- crear y validar la sesion de usuario
+- conectarse a PostgreSQL
 
-### Paso 1: Crear un Nuevo Servicio
+## Comandos recomendados
 
-1. Ve a tu dashboard de Render
-2. Haz clic en **"New +"** y selecciona **"Web Service"**
+- Build Command: `npm install && npm run build`
+- Start Command: `npm run server`
 
-Importante:
+No uses `npm run dev` en Render.
 
-- Este proyecto no es un sitio estatico puro. Usa Vite para construir el frontend y `server/index.js` para servir la app y la API.
-- Si configuras el servicio manualmente, el comando de inicio debe ser `npm run server` o `npm start`.
-- No uses `npm run dev` en Render.
+## Variables requeridas
 
-### Paso 2: Conectar el Repositorio
+Define estas variables en la seccion `Environment` del servicio:
 
-1. Conecta tu repositorio de GitHub/GitLab
-2. Selecciona la rama que quieres desplegar (normalmente `main` o `master`)
-
-### Paso 3: Configurar Build e Inicio
-
-- **Build Command**: `npm install && npm run build`
-- **Start Command**: `npm run server`
-
-### Paso 4: Configurar Variables de Entorno
-
-En la sección **"Environment"** del servicio, agrega las siguientes variables:
-
-```
-VITE_AZURE_CLIENT_ID=tu-client-id-aqui
-VITE_AZURE_TENANT_ID=tu-tenant-id-aqui
+```env
+VITE_AZURE_CLIENT_ID=tu-azure-client-id
+VITE_AZURE_TENANT_ID=tu-azure-tenant-id
+VITE_GOOGLE_CLIENT_ID=tu-google-client-id.apps.googleusercontent.com
 VITE_SHAREPOINT_SITE_URL=https://tu-tenant.sharepoint.com/sites/tu-sitio
 VITE_AUTH_REDIRECT_URI=https://tu-app.onrender.com
 VITE_AUTH_POST_LOGOUT_REDIRECT_URI=https://tu-app.onrender.com/login
+
+APP_SESSION_SECRET=un-secreto-largo-y-unico
+
+PGHOST=tu-host-postgres
+PGPORT=5432
+PGDATABASE=tu_base
+PGUSER=tu_usuario
+PGPASSWORD=tu_password
+PGSSLMODE=require
+
+STORAGE_API_URL=https://tu-storage-api.run.app
+STORAGE_API_SECRET=tu-storage-api-secret
+MAX_GASTO_ATTACHMENT_SIZE_MB=25
 ```
 
-**Importante**: Reemplaza los valores con tus propios valores reales:
-- `tu-client-id-aqui`: Tu Client ID de Azure AD
-- `tu-tenant-id-aqui`: Tu Tenant ID de Azure AD
-- `tu-tenant.sharepoint.com/sites/tu-sitio`: La URL de tu sitio de SharePoint
+## Variables importantes
 
-### Paso 5: Configurar Redirect URIs en Azure AD
+### `APP_SESSION_SECRET`
 
-Después de desplegar en Render, necesitarás agregar la URL de producción a los Redirect URIs en Azure Portal:
+Esta variable es obligatoria en produccion.
 
-1. Ve a [Azure Portal](https://portal.azure.com)
-2. Navega a **Azure Active Directory** > **App registrations** > Tu aplicación
-3. Ve a **Authentication**
-4. En **Redirect URIs**, agrega:
-   - `https://tu-app.onrender.com`
-   - `https://tu-app.onrender.com/login`
+El backend la usa para firmar la cookie de sesion despues del login con Microsoft o Google. Si falta, el login OAuth puede autenticarse con el proveedor, pero fallara al intentar crear la sesion local con este error:
 
-Si tu dominio actual es `https://gestion-integral-pyme.onrender.com`, entonces esas URIs deben quedar asi:
+`APP_SESSION_SECRET no esta configurado en el backend.`
+
+Valor recomendado:
+
+- una cadena aleatoria de al menos 32 caracteres
+- idealmente 64 caracteres o mas
+- no reutilizar una clave antigua o compartida entre proyectos
+
+Ejemplo de valor valido:
+
+```env
+APP_SESSION_SECRET=8a2c4f2f7f764e6a8d7d4c9c55f1b067a63f1a7d9f9a31c2d9d6b7f4a1c8e5b2
+```
+
+Si quieres generar una clave localmente:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+## Configuracion de login
+
+### Microsoft / Azure AD
+
+En Azure Portal, agrega estas Redirect URIs en la aplicacion registrada:
+
+- `https://tu-app.onrender.com`
+- `https://tu-app.onrender.com/login`
+
+Si tu dominio es `https://gestion-integral-pyme.onrender.com`, entonces agrega exactamente:
 
 - `https://gestion-integral-pyme.onrender.com`
 - `https://gestion-integral-pyme.onrender.com/login`
 
-### Paso 6: Desplegar
+### Google
 
-1. Haz clic en **"Create Static Site"** o **"Save Changes"**
-2. Render comenzará a construir y desplegar tu aplicación
-3. Una vez completado, tu aplicación estará disponible en la URL proporcionada por Render
+En Google Cloud Console, para tu OAuth Client ID tipo `Web application`, agrega este origin en `Authorized JavaScript origins`:
 
-## Obtener los Valores de las Variables
-
-### VITE_AZURE_CLIENT_ID y VITE_AZURE_TENANT_ID
-
-1. Ve a [Azure Portal](https://portal.azure.com)
-2. Navega a **Azure Active Directory** > **App registrations**
-3. Selecciona tu aplicación (o crea una nueva)
-4. En la página **Overview**, encontrarás:
-   - **Application (client) ID**: Este es tu `VITE_AZURE_CLIENT_ID`
-   - **Directory (tenant) ID**: Este es tu `VITE_AZURE_TENANT_ID`
-
-### VITE_SHAREPOINT_SITE_URL
-
-Esta es la URL completa de tu sitio de SharePoint, por ejemplo:
-- `https://rekosolcl.sharepoint.com/sites/REKOSOL-GESTIONDEGASTOS`
-
-## Verificación
-
-Después de desplegar, verifica que:
-
-1. La aplicación carga correctamente
-2. El botón "Iniciar Sesión" funciona
-3. Puedes autenticarte con tu cuenta de Office 365
-4. Los datos se cargan desde SharePoint
-
-## Solución de Problemas
-
-### Error: "Faltan las variables de entorno"
-
-- Verifica que todas las variables estén configuradas en Render
-- Asegúrate de que los nombres de las variables sean exactamente como se muestran (con `VITE_` al inicio)
-- Reinicia el servicio después de agregar las variables
-
-### Error: "Redirect URI mismatch"
-
-- Verifica que hayas agregado la URL de Render a los Redirect URIs en Azure Portal
-- Asegúrate de que la URL sea exactamente la misma que envias desde la app
-- Si usas variables de entorno, revisa `VITE_AUTH_REDIRECT_URI` y `VITE_AUTH_POST_LOGOUT_REDIRECT_URI`
-
-### Error: "No se pudo obtener el Site ID"
-
-- Verifica que `VITE_SHAREPOINT_SITE_URL` sea la URL completa del sitio
-- Asegúrate de que tengas acceso al sitio de SharePoint
-
-## Google Login
-
-Para habilitar tambien el acceso con Google agrega esta variable de entorno:
-
-```env
-VITE_GOOGLE_CLIENT_ID=tu-google-client-id.apps.googleusercontent.com
-```
-
-Configuracion recomendada en Google Cloud Console:
-
-1. Crea un OAuth Client ID para tipo **Web application**.
-2. Agrega los **Authorized JavaScript Origins** de local y produccion.
-3. Usa solo identidad para login; no agregues scopes extra de Google APIs.
-
-Ejemplos de origins:
-
-- `http://localhost:3001`
 - `https://tu-app.onrender.com`
 
-Si la app publica es `https://gestion-integral-pyme.onrender.com`, agrega exactamente este origin:
+Si tu dominio es `https://gestion-integral-pyme.onrender.com`, agrega exactamente:
 
 - `https://gestion-integral-pyme.onrender.com`
 
+## Configuracion de base de datos
+
+Si PostgreSQL esta fuera de Render y usa allowlist por IP, debes autorizar las IPs de salida del servicio en tu proveedor de base de datos.
+
+En tu caso, Render te entrego:
+
+- `74.220.48.0/24`
+- `74.220.56.0/24`
+
+Si usas Google Cloud SQL, agregalas en:
+
+`Cloud SQL > tu instancia > Connections > Authorized networks`
+
+## Checklist rapido
+
+Antes de probar el login en produccion, verifica:
+
+- el servicio es `Web Service`
+- el comando de inicio es `npm run server`
+- `APP_SESSION_SECRET` existe en Render
+- la base de datos acepta conexiones desde las IPs de salida de Render
+- `PGSSLMODE=require`
+- Azure tiene las Redirect URIs correctas
+- Google tiene el Authorized JavaScript Origin correcto
+
+## Problemas comunes
+
+### `APP_SESSION_SECRET no esta configurado en el backend`
+
+Falta crear la variable `APP_SESSION_SECRET` en Render.
+
+Solucion:
+
+1. Abre tu servicio en Render
+2. Ve a `Environment`
+3. Agrega `APP_SESSION_SECRET`
+4. Guarda los cambios
+5. Haz un redeploy o reinicia el servicio
+
+### `AADSTS50011 redirect URI mismatch`
+
+La URI enviada desde la app no coincide con la configurada en Azure AD.
+
+Revisa:
+
+- `VITE_AUTH_REDIRECT_URI`
+- `VITE_AUTH_POST_LOGOUT_REDIRECT_URI`
+- Redirect URIs registradas en Azure Portal
+
+### `connect ETIMEDOUT ...:5432`
+
+Render no logra llegar a PostgreSQL.
+
+Revisa:
+
+- `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`
+- que la instancia tenga acceso publico si estas usando IP publica
+- que la allowlist de la base incluya las IPs de salida de Render
+- que `PGSSLMODE=require`
