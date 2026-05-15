@@ -217,6 +217,11 @@ export async function ensureCoreSchema() {
     `);
 
     await query(`
+      alter table fct_gasto
+      alter column empresa_id drop not null
+    `);
+
+    await query(`
       create index if not exists idx_fct_gasto_tenant_fecha
       on fct_gasto (tenant_id, fecha desc, created_at desc)
     `);

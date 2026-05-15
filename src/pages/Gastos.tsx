@@ -17,6 +17,7 @@ import { toast } from '@/hooks/use-toast';
 import { postgresApi, type BootstrapResponse, type CategoriaOption, type TipoDocumentoOption } from '@/services/postgresApi';
 
 const PAGE_SIZE = 50;
+const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
 
 function sortGastosByFechaDesc(items: Gasto[]) {
   return [...items].sort((a, b) => {
@@ -406,7 +407,7 @@ export default function Gastos() {
         ? gasto.montoTotal
         : gasto.monto;
       const detalle = gasto.detalle || 'Sin detalle';
-      const nombreEmpresa = empresa?.razonSocial || 'Empresa desconocida';
+      const nombreEmpresa = empresa?.razonSocial || EMPRESA_NO_INFORMADA_LABEL;
 
       setConfirmTitle('Eliminar gasto');
       setConfirmDescription(
@@ -428,7 +429,7 @@ export default function Gastos() {
 
     const gasto = gastos.find((item) => item.id === gastoAEliminar);
     const empresa = gasto ? empresasData.find((item) => item.id === gasto.empresaId) : null;
-    const nombreEmpresa = empresa?.razonSocial || 'el gasto';
+    const nombreEmpresa = empresa?.razonSocial || EMPRESA_NO_INFORMADA_LABEL;
 
     try {
       await postgresApi.deleteGasto(gastoAEliminar);
@@ -619,8 +620,8 @@ export default function Gastos() {
                       </TableCell>
                       <TableCell>
                         <div>
-                          <p className="font-medium">{empresa?.razonSocial}</p>
-                          <p className="text-sm text-muted-foreground">{empresa?.rut}</p>
+                          <p className="font-medium">{empresa?.razonSocial || EMPRESA_NO_INFORMADA_LABEL}</p>
+                          {empresa?.rut && <p className="text-sm text-muted-foreground">{empresa.rut}</p>}
                         </div>
                       </TableCell>
                       <TableCell>

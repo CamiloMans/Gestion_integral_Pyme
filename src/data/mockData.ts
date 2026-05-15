@@ -32,7 +32,7 @@ export interface Colaborador {
 export interface Gasto {
   id: string;
   fecha: string;
-  empresaId: string;
+  empresaId?: string | null;
   categoria: string;
   tipoDocumento: string; // Ahora es el ID del tipo de documento (lookup)
   numeroDocumento: string;

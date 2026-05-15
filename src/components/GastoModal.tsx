@@ -241,7 +241,7 @@ export function GastoModal({
       setCategoria(categoriaEncontrada ? String(categoriaEncontrada.id) : String(gasto.categoria || ''));
       setTipoDocumento(String(gasto.tipoDocumento || ''));
       setNumeroDocumento(gasto.numeroDocumento);
-      setEmpresaId(gasto.empresaId);
+      setEmpresaId(gasto.empresaId || '');
       setProyectoId(gasto.proyectoId || '');
 
       if (gasto.montoTotal !== undefined && gasto.montoTotal !== null) {
