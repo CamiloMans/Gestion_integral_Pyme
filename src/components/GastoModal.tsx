@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,12 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Gasto, Proyecto, Empresa } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
-import { Save, Plus, Paperclip, Search } from 'lucide-react';
+import { Save, Plus, Paperclip, Search, Loader2 } from 'lucide-react';
 import { ProyectoModal } from './ProyectoModal';
 import { EmpresaModal } from './EmpresaModal';
 import { CategoriaModal } from './CategoriaModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DocumentoViewer } from './DocumentoViewer';
+import { toast } from '@/hooks/use-toast';
+import { postgresApi, type GastoDocumentExtractionResult } from '@/services/postgresApi';
 
 type CategoriaOption = {
   id: string;
@@ -32,6 +34,32 @@ type TipoDocumentoOption = {
 };
 
 type GastoAdjunto = NonNullable<Gasto['archivosAdjuntos']>[number];
+
+function normalizeLookupText(value?: string | null) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeRut(value?: string | null) {
+  return String(value || '').replace(/[^0-9kK]/g, '').toUpperCase();
+}
+
+function isExtractableDocument(file: File) {
+  const mimeType = file.type.toLowerCase();
+  const fileName = file.name.toLowerCase();
+
+  return (
+    mimeType.startsWith('image/') ||
+    mimeType === 'application/pdf' ||
+    mimeType === 'application/xml' ||
+    mimeType === 'text/xml' ||
+    /\.(jpe?g|png|webp|pdf|xml)$/i.test(fileName)
+  );
+}
 
 interface GastoModalProps {
   open: boolean;
@@ -91,6 +119,7 @@ export function GastoModal({
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [isExtractingDocument, setIsExtractingDocument] = useState(false);
 
   const clearLocalPreview = useCallback(() => {
     if (localPreviewUrl) {
@@ -350,6 +379,110 @@ export function GastoModal({
     setCategoriaModalOpen(false);
   };
 
+  const resolveTipoDocumentoId = useCallback((extractedType?: string | null) => {
+    const normalizedType = normalizeLookupText(extractedType);
+    if (!normalizedType) return '';
+
+    return tiposDocumentoOrdenados.find((item) => normalizeLookupText(item.nombre) === normalizedType)?.id || '';
+  }, [tiposDocumentoOrdenados]);
+
+  const resolveEmpresaId = useCallback((extracted: GastoDocumentExtractionResult) => {
+    const candidateRuts = [
+      extracted.empresaRut,
+      extracted.emisorRut,
+    ].map(normalizeRut).filter((rut): rut is string => Boolean(rut));
+    const rutMatch = todasLasEmpresas.find((empresa) => {
+      const empresaRut = normalizeRut(empresa.rut);
+      return empresaRut && candidateRuts.includes(empresaRut);
+    });
+
+    if (rutMatch) {
+      return rutMatch.id;
+    }
+
+    const candidateNames = [
+      extracted.empresaNombre,
+      extracted.emisorNombre,
+    ].map(normalizeLookupText).filter((name): name is string => Boolean(name));
+
+    return todasLasEmpresas.find((empresa) => {
+      const empresaName = normalizeLookupText(empresa.razonSocial);
+      return candidateNames.some((candidateName) =>
+        empresaName === candidateName ||
+        empresaName.includes(candidateName) ||
+        candidateName.includes(empresaName)
+      );
+    })?.id || '';
+  }, [todasLasEmpresas]);
+
+  const applyExtractedDocumentData = useCallback((extracted: GastoDocumentExtractionResult) => {
+    if (extracted.fecha && /^\d{4}-\d{2}-\d{2}$/.test(extracted.fecha)) {
+      setFecha(extracted.fecha);
+    }
+
+    const resolvedTipoDocumentoId = resolveTipoDocumentoId(extracted.tipoDocumento);
+    if (resolvedTipoDocumentoId) {
+      setTipoDocumento(resolvedTipoDocumentoId);
+    }
+
+    if (extracted.numeroDocumento) {
+      setNumeroDocumento(extracted.numeroDocumento.replace(/\.0$/, ''));
+    }
+
+    const resolvedEmpresaId = resolveEmpresaId(extracted);
+    if (resolvedEmpresaId) {
+      setEmpresaId(resolvedEmpresaId);
+    }
+
+    if (typeof extracted.montoTotal === 'number' && Number.isFinite(extracted.montoTotal)) {
+      setMonto(formatNumericInput(String(extracted.montoTotal), { allowDecimal: false }));
+    }
+
+    if (extracted.detalle) {
+      setDetalle(extracted.detalle.toUpperCase());
+    }
+
+    const warnings = extracted.warnings?.length ? ` ${extracted.warnings.join(' ')}` : '';
+    toast({
+      title: 'Documento escaneado',
+      description: `Se completaron los datos detectados.${warnings}`,
+      variant: 'success',
+    });
+  }, [resolveEmpresaId, resolveTipoDocumentoId]);
+
+  const handleAttachmentInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    const nuevosArchivos = files.map((archivo) => ({
+      nombre: archivo.name,
+      url: '',
+      tipo: archivo.type || 'application/octet-stream',
+      file: archivo,
+    }));
+
+    setArchivosAdjuntos((prev) => [...prev, ...nuevosArchivos]);
+    event.target.value = '';
+
+    const fileToExtract = files.find(isExtractableDocument);
+    if (!fileToExtract) {
+      return;
+    }
+
+    setIsExtractingDocument(true);
+
+    try {
+      const extracted = await postgresApi.extractGastoDocument(fileToExtract);
+      applyExtractedDocumentData(extracted);
+    } catch (error) {
+      toast({
+        title: 'No se pudo escanear el documento',
+        description: error instanceof Error ? error.message : 'Error desconocido al extraer datos.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExtractingDocument(false);
+    }
+  }, [applyExtractedDocumentData]);
+
   const montoValue = parseNumericInput(monto, { allowDecimal: false });
   const montoNetoValue = parseNumericInput(montoNeto, { allowDecimal: false });
   const montoIvaValue = parseNumericInput(montoIva, { allowDecimal: false });
@@ -367,6 +500,9 @@ export function GastoModal({
                 </span>
               )}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Formulario para registrar gastos y adjuntar documentos para extraer datos automaticamente.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4 mt-4">
             <div className="space-y-2">
@@ -600,17 +736,7 @@ export function GastoModal({
                   multiple
                   className="hidden"
                   accept="image/*,application/pdf,text/xml,application/xml,.doc,.docx,.xls,.xlsx"
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    const nuevosArchivos = files.map((archivo) => ({
-                      nombre: archivo.name,
-                      url: '',
-                      tipo: archivo.type || 'application/octet-stream',
-                      file: archivo,
-                    }));
-                    setArchivosAdjuntos((prev) => [...prev, ...nuevosArchivos]);
-                    e.target.value = '';
-                  }}
+                  onChange={handleAttachmentInputChange}
                 />
                 <Button
                   type="button"
@@ -618,8 +744,13 @@ export function GastoModal({
                   size="icon"
                   onClick={() => document.getElementById('archivosAdjuntos')?.click()}
                   title="Adjuntar documentos"
+                  disabled={isExtractingDocument}
                 >
-                  <Paperclip size={18} />
+                  {isExtractingDocument ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Paperclip size={18} />
+                  )}
                 </Button>
               </div>
               {aplicaImpuesto && (

@@ -164,6 +164,28 @@ type GastoMutationPayload = Omit<Gasto, 'id' | 'archivosAdjuntos'> & {
   archivosAdjuntos?: GastoAttachmentInput[];
   existingAttachmentIds?: string[];
 };
+type GastoDocumentExtractionResult = {
+  fecha: string | null;
+  tipoDocumento: 'FACTURA' | 'BOLETA' | 'BOLETA DE HONORARIO' | 'FACTURA EXENTA' | 'OTRO';
+  numeroDocumento: string | null;
+  empresaNombre: string | null;
+  empresaRut: string | null;
+  emisorNombre: string | null;
+  emisorRut: string | null;
+  receptorNombre: string | null;
+  receptorRut: string | null;
+  montoNeto: number | null;
+  iva: number | null;
+  montoTotal: number | null;
+  detalle: string | null;
+  confidence: number;
+  warnings: string[];
+  metadata?: {
+    model?: string;
+    fileName?: string;
+    mimeType?: string;
+  };
+};
 type AsistenciaTipoRegistro = 'entrada' | 'salida';
 type AsistenciaRecord = {
   id: string;
@@ -269,6 +291,12 @@ function buildGastoFormData(gasto: Omit<Gasto, 'id'>) {
     }
   });
 
+  return formData;
+}
+
+function buildGastoExtractionFormData(file: File) {
+  const formData = new FormData();
+  formData.append('archivo', file);
   return formData;
 }
 
@@ -551,6 +579,13 @@ export const postgresApi = {
     });
   },
 
+  extractGastoDocument(file: File) {
+    return request<GastoDocumentExtractionResult>('/api/gastos/extraer-documento', {
+      method: 'POST',
+      body: buildGastoExtractionFormData(file),
+    });
+  },
+
   updateGasto(id: string, gasto: Omit<Gasto, 'id'>) {
     return request<Gasto>(`/api/gastos/${id}`, {
       method: 'PUT',
@@ -576,6 +611,7 @@ export type {
   ConfiguracionResponse,
   DocumentoHitoRecord,
   DocumentoHitoRecordCreateInput,
+  GastoDocumentExtractionResult,
   DocumentoProyectoRecord,
   DocumentoProyectoRecordCreateInput,
   EmpresaCreateInput,

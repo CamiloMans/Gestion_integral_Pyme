@@ -61,6 +61,9 @@ const STORAGE_API_URL = String(process.env.STORAGE_API_URL || '').replace(/\/+$/
 const STORAGE_API_SECRET = String(process.env.STORAGE_API_SECRET || '');
 const LOCAL_STORAGE_DIR = String(process.env.LOCAL_STORAGE_DIR || '.storage/documentos').trim() || '.storage/documentos';
 const MAX_GASTO_ATTACHMENT_SIZE_MB = Number(process.env.MAX_GASTO_ATTACHMENT_SIZE_MB || 25);
+const ANTHROPIC_API_KEY = String(process.env.API_KEY_ANTHROPIC || process.env.ANTHROPIC_API_KEY || '').trim();
+const ANTHROPIC_EXTRACTION_MODEL = String(process.env.ANTHROPIC_EXTRACTION_MODEL || 'claude-sonnet-4-20250514').trim();
+const ANTHROPIC_EXTRACTION_FALLBACK_MODEL = String(process.env.ANTHROPIC_EXTRACTION_FALLBACK_MODEL || 'claude-opus-4-1-20250805').trim();
 const hasRemoteStorageConfig = Boolean(STORAGE_API_URL && STORAGE_API_SECRET);
 const hasPartialRemoteStorageConfig = Boolean(STORAGE_API_URL || STORAGE_API_SECRET);
 const localStorageRootDir = path.resolve(rootDir, LOCAL_STORAGE_DIR);
@@ -558,6 +561,322 @@ function parseMultipartPayload(req) {
 
 function parseGastoPayload(req) {
   return parseMultipartPayload(req);
+}
+
+function detectDocumentMimeType(file) {
+  const rawMimeType = String(file?.mimetype || '').trim().toLowerCase();
+  const fileName = String(file?.originalname || '').trim().toLowerCase();
+
+  if (rawMimeType && rawMimeType !== 'application/octet-stream') {
+    return rawMimeType;
+  }
+
+  if (fileName.endsWith('.pdf')) return 'application/pdf';
+  if (fileName.endsWith('.png')) return 'image/png';
+  if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) return 'image/jpeg';
+  if (fileName.endsWith('.webp')) return 'image/webp';
+  if (fileName.endsWith('.xml')) return 'application/xml';
+
+  return rawMimeType || 'application/octet-stream';
+}
+
+function normalizeExtractedNumber(value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Math.round(value) : null;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value
+    .replace(/[^\d,.-]/g, '')
+    .replace(/\.(?=\d{3}(\D|$))/g, '')
+    .replace(',', '.');
+  const parsed = Number(normalized);
+
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
+}
+
+function normalizeExtractedText(value, { uppercase = false } = {}) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return uppercase ? normalized.toUpperCase() : normalized;
+}
+
+function normalizeRut(value) {
+  const normalized = normalizeExtractedText(value, { uppercase: true });
+  if (!normalized) {
+    return null;
+  }
+
+  const cleaned = normalized.replace(/[^0-9K]/g, '');
+  if (cleaned.length < 2) {
+    return normalized;
+  }
+
+  return `${cleaned.slice(0, -1)}-${cleaned.slice(-1)}`;
+}
+
+function normalizeDocumentType(value) {
+  const normalized = normalizeExtractedText(value, { uppercase: true });
+  if (!normalized) {
+    return 'OTRO';
+  }
+
+  if (normalized.includes('HONORARIO')) return 'BOLETA DE HONORARIO';
+  if (normalized.includes('EXENTA') || normalized.includes('NO AFECTA')) return 'FACTURA EXENTA';
+  if (normalized.includes('FACTURA')) return 'FACTURA';
+  if (normalized.includes('BOLETA')) return 'BOLETA';
+  return 'OTRO';
+}
+
+function normalizeExtractionPayload(rawPayload, metadata) {
+  const warnings = Array.isArray(rawPayload?.warnings)
+    ? rawPayload.warnings.map((warning) => normalizeExtractedText(warning)).filter(Boolean)
+    : [];
+  const confidence = Number(rawPayload?.confidence);
+
+  return {
+    fecha: normalizeExtractedText(rawPayload?.fecha),
+    tipoDocumento: normalizeDocumentType(rawPayload?.tipoDocumento),
+    numeroDocumento: normalizeExtractedText(rawPayload?.numeroDocumento),
+    empresaNombre: normalizeExtractedText(rawPayload?.empresaNombre, { uppercase: true }),
+    empresaRut: normalizeRut(rawPayload?.empresaRut),
+    emisorNombre: normalizeExtractedText(rawPayload?.emisorNombre, { uppercase: true }),
+    emisorRut: normalizeRut(rawPayload?.emisorRut),
+    receptorNombre: normalizeExtractedText(rawPayload?.receptorNombre, { uppercase: true }),
+    receptorRut: normalizeRut(rawPayload?.receptorRut),
+    montoNeto: normalizeExtractedNumber(rawPayload?.montoNeto),
+    iva: normalizeExtractedNumber(rawPayload?.iva),
+    montoTotal: normalizeExtractedNumber(rawPayload?.montoTotal),
+    detalle: normalizeExtractedText(rawPayload?.detalle, { uppercase: true }),
+    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+    warnings,
+    metadata,
+  };
+}
+
+function validateAnthropicRuntimeApiKey() {
+  if (!ANTHROPIC_API_KEY) {
+    throw createStorageError('API_KEY_ANTHROPIC no esta configurada en el backend.', 500);
+  }
+
+  if (ANTHROPIC_API_KEY.startsWith('amsk-')) {
+    throw createStorageError(
+      'API_KEY_ANTHROPIC parece ser una Admin API key de Anthropic. Para extraer documentos usa una API key normal de Console que empiece con sk-ant-.',
+      500,
+    );
+  }
+
+  if (!ANTHROPIC_API_KEY.startsWith('sk-ant-')) {
+    throw createStorageError(
+      'API_KEY_ANTHROPIC no parece una API key valida de Anthropic. Debe empezar con sk-ant-.',
+      500,
+    );
+  }
+}
+
+function getExpenseExtractionJsonSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'fecha',
+      'tipoDocumento',
+      'numeroDocumento',
+      'empresaNombre',
+      'empresaRut',
+      'emisorNombre',
+      'emisorRut',
+      'receptorNombre',
+      'receptorRut',
+      'montoNeto',
+      'iva',
+      'montoTotal',
+      'detalle',
+      'confidence',
+      'warnings',
+    ],
+    properties: {
+      fecha: { type: ['string', 'null'], description: 'Fecha del documento en formato YYYY-MM-DD.' },
+      tipoDocumento: {
+        type: 'string',
+        enum: ['FACTURA', 'BOLETA', 'BOLETA DE HONORARIO', 'FACTURA EXENTA', 'OTRO'],
+      },
+      numeroDocumento: { type: ['string', 'null'], description: 'Folio, numero de factura, boleta u orden.' },
+      empresaNombre: { type: ['string', 'null'], description: 'Proveedor real a cargar como empresa/persona.' },
+      empresaRut: { type: ['string', 'null'], description: 'RUT del proveedor real, si esta visible.' },
+      emisorNombre: { type: ['string', 'null'] },
+      emisorRut: { type: ['string', 'null'] },
+      receptorNombre: { type: ['string', 'null'] },
+      receptorRut: { type: ['string', 'null'] },
+      montoNeto: { type: ['number', 'null'] },
+      iva: { type: ['number', 'null'] },
+      montoTotal: { type: ['number', 'null'] },
+      detalle: { type: ['string', 'null'], description: 'Descripcion breve del gasto, no mas de 120 caracteres.' },
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+      warnings: { type: 'array', items: { type: 'string' } },
+    },
+  };
+}
+
+function extractAnthropicToolInput(responseBody) {
+  for (const contentItem of responseBody?.content || []) {
+    if (contentItem?.type === 'tool_use' && contentItem?.input) {
+      return contentItem.input;
+    }
+  }
+
+  const textChunks = [];
+  for (const contentItem of responseBody?.content || []) {
+    if (contentItem?.type === 'text' && typeof contentItem?.text === 'string') {
+      textChunks.push(contentItem.text);
+    }
+  }
+
+  const outputText = textChunks.join('\n').trim();
+  if (!outputText) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(outputText);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildAnthropicExtractionMessages(file, mimeType) {
+  const base64File = file.buffer.toString('base64');
+  const prompt = [
+    'Extrae datos de un gasto chileno para llenar formulario Rekosol.',
+    'Prioriza proveedor real del gasto para empresaNombre/empresaRut.',
+    'Si el documento dice "POR CUENTA DE", usa esa entidad como proveedor; conserva emisorRut tambien.',
+    'Receptor normalmente puede ser REKOSOL INGENIERIA SPA, no usarlo como proveedor.',
+    'Montos en CLP como numeros enteros sin puntos ni signo peso.',
+    'Si hay factura con subtotal neto, IVA y total, extrae esos tres.',
+    'Si es boleta/comprobante sin IVA visible, deja montoNeto e iva null y usa montoTotal.',
+    'Si el documento es comprobante bancario, tipoDocumento OTRO salvo que muestre factura/boleta.',
+    'No inventes datos no visibles.',
+  ].join('\n');
+
+  const content = [];
+
+  if (mimeType.startsWith('image/')) {
+    content.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: mimeType,
+        data: base64File,
+      },
+    });
+  } else if (mimeType === 'application/pdf') {
+    content.push({
+      type: 'document',
+      source: {
+        type: 'base64',
+        media_type: 'application/pdf',
+        data: base64File,
+      },
+    });
+  } else {
+    const xmlText = file.buffer.toString('utf8').slice(0, 120000);
+    content.push({
+      type: 'text',
+      text: `Contenido XML del documento:\n${xmlText}`,
+    });
+  }
+
+  content.push({ type: 'text', text: prompt });
+
+  return [{ role: 'user', content }];
+}
+
+async function requestAnthropicExpenseExtraction({ file, mimeType, model }) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1200,
+      messages: buildAnthropicExtractionMessages(file, mimeType),
+      tools: [
+        {
+          name: 'record_expense_document_extraction',
+          description: 'Registra los campos extraidos desde un documento tributario o comprobante chileno.',
+          input_schema: getExpenseExtractionJsonSchema(),
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'record_expense_document_extraction' },
+    }),
+  });
+
+  const responseBody = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message = responseBody?.error?.message || `Anthropic respondio ${response.status}`;
+    throw new Error(message);
+  }
+
+  const toolInput = extractAnthropicToolInput(responseBody);
+  if (!toolInput) {
+    throw new Error('Anthropic no devolvio datos estructurados.');
+  }
+
+  return toolInput;
+}
+
+async function extractExpenseDocument(file) {
+  validateAnthropicRuntimeApiKey();
+
+  if (!file?.buffer?.length) {
+    throw createStorageError('Debes adjuntar un archivo para extraer datos.', 400);
+  }
+
+  const mimeType = detectDocumentMimeType(file);
+  const supported =
+    mimeType.startsWith('image/') ||
+    mimeType === 'application/pdf' ||
+    mimeType === 'application/xml' ||
+    mimeType === 'text/xml';
+
+  if (!supported) {
+    throw createStorageError('Solo se pueden escanear imagenes, PDF o XML.', 400);
+  }
+
+  const models = Array.from(new Set([
+    ANTHROPIC_EXTRACTION_MODEL,
+    ANTHROPIC_EXTRACTION_FALLBACK_MODEL,
+  ].filter(Boolean)));
+  const errors = [];
+
+  for (const model of models) {
+    try {
+      const rawPayload = await requestAnthropicExpenseExtraction({ file, mimeType, model });
+      return normalizeExtractionPayload(rawPayload, {
+        model,
+        fileName: file.originalname || 'documento',
+        mimeType,
+      });
+    } catch (error) {
+      errors.push(`${model}: ${error instanceof Error ? error.message : 'error desconocido'}`);
+    }
+  }
+
+  throw new Error(`No se pudo extraer informacion del documento. ${errors.join(' | ')}`);
 }
 
 function getCategoryColor(nombre) {
@@ -3872,6 +4191,26 @@ app.get('/api/documentos/:id/contenido', async (req, res) => {
     const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
     res.status(statusCode).json({
       error: error instanceof Error ? error.message : 'Error al descargar documento',
+    });
+  }
+});
+
+app.post('/api/gastos/extraer-documento', maybeHandleSingleFileUpload('archivo'), async (req, res) => {
+  try {
+    await getTenant();
+
+    const extracted = await extractExpenseDocument(req.file);
+    res.json(extracted);
+  } catch (error) {
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `El archivo supera el limite de ${MAX_GASTO_ATTACHMENT_SIZE_MB} MB`,
+      });
+    }
+
+    const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
+    res.status(statusCode).json({
+      error: error instanceof Error ? error.message : 'Error al extraer datos del documento',
     });
   }
 });
