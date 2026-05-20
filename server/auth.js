@@ -12,6 +12,7 @@ const AUTH_PROVIDER_LABELS = Object.freeze({
   [AUTH_PROVIDERS.GOOGLE]: 'Google',
 });
 const SESSION_COOKIE_NAME = 'rekosol_session';
+const DEV_AUTH_BYPASS_LOGOUT_COOKIE_NAME = 'rekosol_dev_auth_bypass_logged_out';
 const SESSION_AUDIENCE = 'rekosol-browser';
 const SESSION_ISSUER = 'rekosol-app';
 const SESSION_DURATION_SECONDS = 60 * 60 * 12;
@@ -565,6 +566,10 @@ async function buildDevBypassSession() {
   return buildAppSessionForUser(devSeed.userId, devSeed.tenantId, null);
 }
 
+function shouldSuppressDevBypass(cookies) {
+  return isDevAuthBypassEnabled() && cookies[DEV_AUTH_BYPASS_LOGOUT_COOKIE_NAME] === '1';
+}
+
 async function signSessionToken({ userId, activeTenantId, authProvider }) {
   return new SignJWT({
     activeTenantId: activeTenantId || null,
@@ -675,6 +680,10 @@ export async function resolveAppSessionFromRequest(req) {
   const sessionToken = cookies[SESSION_COOKIE_NAME];
 
   if (!sessionToken) {
+    if (shouldSuppressDevBypass(cookies)) {
+      return null;
+    }
+
     return buildDevBypassSession();
   }
 
@@ -698,11 +707,19 @@ export async function resolveAppSessionFromRequest(req) {
     }
 
     if (!userId) {
+      if (shouldSuppressDevBypass(cookies)) {
+        return null;
+      }
+
       return buildDevBypassSession();
     }
 
     return buildAppSessionForUser(userId, activeTenantId, authProvider);
   } catch (_error) {
+    if (shouldSuppressDevBypass(cookies)) {
+      return null;
+    }
+
     return buildDevBypassSession();
   }
 }
@@ -721,6 +738,19 @@ export async function createSessionCookie(appSession) {
 
 export function clearSessionCookie() {
   return serializeCookie(SESSION_COOKIE_NAME, '', {
+    expires: new Date(0),
+    maxAge: 0,
+  });
+}
+
+export function createDevAuthBypassLogoutCookie() {
+  return serializeCookie(DEV_AUTH_BYPASS_LOGOUT_COOKIE_NAME, '1', {
+    maxAge: SESSION_DURATION_SECONDS,
+  });
+}
+
+export function clearDevAuthBypassLogoutCookie() {
+  return serializeCookie(DEV_AUTH_BYPASS_LOGOUT_COOKIE_NAME, '', {
     expires: new Date(0),
     maxAge: 0,
   });

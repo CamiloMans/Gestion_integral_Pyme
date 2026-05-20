@@ -336,7 +336,7 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
       )}
 
       <main className="flex-1 overflow-auto">
-        <div className="p-4 lg:p-8">{children}</div>
+        <div className="p-3 sm:p-4 lg:p-8">{children}</div>
       </main>
 
       {onNewGasto && (

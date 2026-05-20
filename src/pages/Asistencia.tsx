@@ -529,8 +529,55 @@ function AttendanceTable({
   const totalColumns = showWorkerColumn ? 7 : 6;
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-      <div className="overflow-x-auto">
+    <div className="space-y-2 md:overflow-hidden md:rounded-xl md:border md:bg-card md:shadow-sm">
+      <div className="space-y-2 md:hidden">
+        {records.length === 0 ? (
+          <div className="rounded-lg border bg-card p-4 text-center text-sm text-muted-foreground">
+            {emptyMessage}
+          </div>
+        ) : (
+          records.map((record) => (
+            <div
+              key={record.id}
+              className={cn(
+                'rounded-lg border bg-card p-3 shadow-sm',
+                !record.salidaAt && 'border-sky-200 bg-sky-50/70',
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">
+                    {showWorkerColumn ? record.userName : formatDateShort(record.workDate)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {showWorkerColumn ? formatDateShort(record.workDate) : record.salidaAt ? 'Jornada cerrada' : 'Jornada abierta'}
+                  </p>
+                </div>
+                <Badge variant={record.salidaAt ? 'secondary' : 'default'} className="shrink-0">
+                  {record.salidaAt ? 'Cerrada' : 'Abierta'}
+                </Badge>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] uppercase text-muted-foreground">Entrada</p>
+                  <p className="text-sm font-semibold">{formatTime(record.entradaAt)}</p>
+                </div>
+                <div className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] uppercase text-muted-foreground">Salida</p>
+                  <p className="text-sm font-semibold">{formatTime(record.salidaAt)}</p>
+                </div>
+                <div className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] uppercase text-muted-foreground">Horas</p>
+                  <p className="text-sm font-semibold">{formatDurationFromMinutes(getWorkedMinutes(record))}</p>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
@@ -613,8 +660,45 @@ function AttendanceTable({
 
 function TeamStatusTable({ rows, emptyMessage }: { rows: TeamStatusRow[]; emptyMessage: string }) {
   return (
-    <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-      <div className="overflow-x-auto">
+    <div className="space-y-2 md:overflow-hidden md:rounded-xl md:border md:bg-card md:shadow-sm">
+      <div className="space-y-2 md:hidden">
+        {rows.length === 0 ? (
+          <div className="rounded-lg border bg-card p-4 text-center text-sm text-muted-foreground">
+            {emptyMessage}
+          </div>
+        ) : (
+          rows.map((row) => (
+            <div key={row.userId} className="rounded-lg border bg-card p-3 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{row.userName}</p>
+                  <p className="truncate text-xs text-muted-foreground">{row.userEmail}</p>
+                </div>
+                <Badge variant={row.badgeVariant} className="shrink-0">
+                  {row.statusLabel}
+                </Badge>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] uppercase text-muted-foreground">Entrada</p>
+                  <p className="text-sm font-semibold">{formatTime(row.todayRecord?.entradaAt)}</p>
+                </div>
+                <div className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] uppercase text-muted-foreground">Salida</p>
+                  <p className="text-sm font-semibold">{formatTime(row.todayRecord?.salidaAt)}</p>
+                </div>
+                <div className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] uppercase text-muted-foreground">Horas</p>
+                  <p className="text-sm font-semibold">{formatDurationFromMinutes(row.workedMinutes)}</p>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
@@ -1073,6 +1157,15 @@ export default function Asistencia() {
           ? `Tu jornada esta activa desde las ${formatTime(currentUserOpenRecord.entradaAt)}`
           : `${myRecords.length} registros personales en ${dashboard.range.days} dias`
       : 'Sin datos de asistencia disponibles';
+  const mobilePageSubtitle = loading
+    ? 'Cargando...'
+    : dashboard
+      ? currentView === 'personal'
+        ? `${filteredTeamStatusRows.length} personas`
+        : currentUserOpenRecord
+          ? `Activa desde ${formatTime(currentUserOpenRecord.entradaAt)}`
+          : `${myRecords.length} registros`
+      : 'Sin datos';
 
   if (needsRedirectToKnownRoute) {
     return <Navigate to={ASISTENCIA_PATHS.registro} replace />;
@@ -1084,46 +1177,67 @@ export default function Asistencia() {
 
   return (
     <Layout>
-      <PageHeader title="Control de Asistencia" subtitle={pageSubtitle}>
-        <div className="w-full sm:w-[170px]">
-          <Select value={rangeDays} onValueChange={setRangeDays}>
-            <SelectTrigger className="bg-card">
-              <SelectValue placeholder="Selecciona rango" />
-            </SelectTrigger>
-            <SelectContent>
-              {RANGE_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <PageHeader
+        title={(
+          <>
+            <span className="sm:hidden">Asistencia</span>
+            <span className="hidden sm:inline">Control de Asistencia</span>
+          </>
+        )}
+        subtitle={(
+          <>
+            <span className="sm:hidden">{mobilePageSubtitle}</span>
+            <span className="hidden sm:inline">{pageSubtitle}</span>
+          </>
+        )}
+      >
+        <div className="grid w-full grid-cols-[1fr_auto] gap-2 sm:flex sm:w-auto sm:items-center">
+          <div className="min-w-0 sm:w-[170px]">
+            <Select value={rangeDays} onValueChange={setRangeDays}>
+              <SelectTrigger className="bg-card">
+                <SelectValue placeholder="Selecciona rango" />
+              </SelectTrigger>
+              <SelectContent>
+                {RANGE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-        <Button type="button" variant="outline" onClick={() => void loadDashboard()} disabled={loading}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Actualizar
-        </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void loadDashboard()}
+            disabled={loading}
+            aria-label="Actualizar asistencia"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <span className="hidden sm:inline">Actualizar</span>
+          </Button>
+        </div>
       </PageHeader>
 
       {currentView === 'registro' ? (
-        <div className="space-y-6">
-          <div className="grid gap-4 xl:grid-cols-[1.6fr,1fr]">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="grid gap-3 sm:gap-4 xl:grid-cols-[1.6fr,1fr]">
             <Card className="overflow-hidden border-sky-100 bg-gradient-to-br from-sky-50 via-white to-cyan-50 shadow-sm">
-              <CardHeader className="pb-4">
+              <CardHeader className="p-4 pb-3 sm:p-6 sm:pb-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <CardTitle className="text-2xl">Mi jornada</CardTitle>
-                    <CardDescription>
+                    <CardTitle className="text-xl sm:text-2xl">Mi jornada</CardTitle>
+                    <CardDescription className="hidden sm:block">
                       Esta vista queda dedicada solo al registro individual con geolocalizacion.
                     </CardDescription>
                   </div>
-                  <Badge variant={currentUserOpenRecord ? 'default' : 'secondary'}>
+                  <Badge className="w-fit" variant={currentUserOpenRecord ? 'default' : 'secondary'}>
                     {getRecordStatusLabel(todayMyRecord || currentUserOpenRecord)}
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-5">
+              <CardContent className="space-y-4 p-4 pt-0 sm:space-y-5 sm:p-6 sm:pt-0">
                 {loading ? (
                   <div className="space-y-3">
                     <Skeleton className="h-7 w-48" />
@@ -1132,18 +1246,18 @@ export default function Asistencia() {
                   </div>
                 ) : (
                   <>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
-                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Trabajador</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">{session?.user.nombre || 'Sin nombre'}</p>
-                        <p className="text-sm text-muted-foreground">{session?.user.email || 'Sin correo'}</p>
+                    <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3">
+                      <div className="hidden rounded-lg border border-sky-100 bg-white/90 p-3 sm:block sm:rounded-2xl sm:p-4">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sky-700 sm:text-xs sm:tracking-[0.2em]">Trabajador</p>
+                        <p className="mt-1 truncate text-base font-semibold text-slate-900 sm:mt-2 sm:text-lg">{session?.user.nombre || 'Sin nombre'}</p>
+                        <p className="truncate text-xs text-muted-foreground sm:text-sm">{session?.user.email || 'Sin correo'}</p>
                       </div>
-                      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
-                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Entrada</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                      <div className="rounded-lg border border-sky-100 bg-white/90 p-3 sm:rounded-2xl sm:p-4">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sky-700 sm:text-xs sm:tracking-[0.2em]">Entrada</p>
+                        <p className="mt-1 text-base font-semibold text-slate-900 sm:mt-2 sm:text-lg">
                           {currentUserOpenRecord ? formatTime(currentUserOpenRecord.entradaAt) : formatTime(todayMyRecord?.entradaAt)}
                         </p>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="truncate text-xs text-muted-foreground sm:text-sm">
                           {currentUserOpenRecord
                             ? formatDateTime(currentUserOpenRecord.entradaAt)
                             : todayMyRecord
@@ -1151,25 +1265,27 @@ export default function Asistencia() {
                               : 'Aun no registrada'}
                         </p>
                       </div>
-                      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4">
-                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-sky-700">Duracion</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">{getDurationLabel(currentUserOpenRecord)}</p>
-                        <p className="text-sm text-muted-foreground">
+                      <div className="rounded-lg border border-sky-100 bg-white/90 p-3 sm:rounded-2xl sm:p-4">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sky-700 sm:text-xs sm:tracking-[0.2em]">Duracion</p>
+                        <p className="mt-1 text-base font-semibold text-slate-900 sm:mt-2 sm:text-lg">{getDurationLabel(currentUserOpenRecord)}</p>
+                        <p className="hidden text-sm text-muted-foreground sm:block">
                           {currentUserOpenRecord ? 'Contando hasta tu salida' : 'Se actualiza al cerrar la jornada'}
                         </p>
                       </div>
                     </div>
 
-                    <Alert className={locationStatusMeta.alertClassName}>
+                    <Alert className={cn(locationStatusMeta.alertClassName, 'p-3 sm:p-4')}>
                       <MapPin className="h-4 w-4" />
-                      <AlertTitle className="flex flex-wrap items-center gap-2">
-                        <span>{locationStatusMeta.title}</span>
+                      <AlertTitle className="flex flex-wrap items-center gap-2 text-sm sm:text-base">
+                        <span className="sm:hidden">Ubicacion</span>
+                        <span className="hidden sm:inline">{locationStatusMeta.title}</span>
                         <Badge variant={locationStatusMeta.badgeVariant}>{locationStatusMeta.badgeLabel}</Badge>
                       </AlertTitle>
                       <AlertDescription>
-                        <div className="space-y-3">
-                          <p>{locationStatusMeta.description}</p>
-                          <p>
+                        <div className="space-y-3 text-sm">
+                          <p className="sm:hidden">Ubicacion necesaria para marcar entrada o salida.</p>
+                          <p className="hidden sm:block">{locationStatusMeta.description}</p>
+                          <p className="hidden sm:block">
                             Cada marca guarda latitud, longitud y precision estimada para respaldar la hora oficial de entrada y salida.
                           </p>
 
@@ -1183,10 +1299,11 @@ export default function Asistencia() {
                             || locationPermissionState === 'unknown'
                             || locationPermissionState === 'granted'
                             || locationPermissionState === 'denied') && (
-                            <div className="flex flex-wrap gap-2">
+                            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                               <Button
                                 type="button"
                                 variant={locationPermissionState === 'granted' ? 'outline' : 'default'}
+                                className="px-3"
                                 onClick={() => void handlePrepareLocation()}
                                 disabled={isLocationBusy}
                               >
@@ -1195,23 +1312,30 @@ export default function Asistencia() {
                                 ) : (
                                   <MapPin className="h-4 w-4" />
                                 )}
-                                {locationPermissionState === 'granted' ? 'Actualizar ubicacion' : 'Activar ubicacion'}
+                                <span className="sm:hidden">
+                                  {locationPermissionState === 'granted' ? 'Actualizar' : 'Activar'}
+                                </span>
+                                <span className="hidden sm:inline">
+                                  {locationPermissionState === 'granted' ? 'Actualizar ubicacion' : 'Activar ubicacion'}
+                                </span>
                               </Button>
 
                               <Button
                                 type="button"
                                 variant="ghost"
+                                className="px-3"
                                 onClick={() => void refreshLocationPermissionState()}
                                 disabled={isLocationBusy}
                               >
                                 <RefreshCw className="h-4 w-4" />
-                                Revisar permiso
+                                <span className="sm:hidden">Revisar</span>
+                                <span className="hidden sm:inline">Revisar permiso</span>
                               </Button>
                             </div>
                           )}
 
                           {locationHelpSteps.length > 0 && (
-                            <div className="space-y-1 text-xs text-muted-foreground">
+                            <div className="hidden space-y-1 text-xs text-muted-foreground sm:block">
                               {locationHelpSteps.map((step) => (
                                 <p key={step}>- {step}</p>
                               ))}
@@ -1221,18 +1345,21 @@ export default function Asistencia() {
                       </AlertDescription>
                     </Alert>
 
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-2">
                       <Button
                         type="button"
                         size="lg"
-                        className="h-auto min-h-14 justify-start gap-3 rounded-2xl"
+                        className="h-auto min-h-12 justify-center gap-2 rounded-lg px-3 sm:min-h-14 sm:justify-start sm:gap-3 sm:rounded-2xl"
                         disabled={Boolean(currentUserOpenRecord) || isLocationBusy}
                         onClick={() => void handleMark('entrada')}
                       >
                         {locationAction === 'entrada' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogIn className="h-5 w-5" />}
                         <div className="text-left">
-                          <p className="font-semibold">Registrar entrada</p>
-                          <p className="text-xs text-primary-foreground/80">Captura hora actual y punto GPS</p>
+                          <p className="font-semibold">
+                            <span className="sm:hidden">Entrada</span>
+                            <span className="hidden sm:inline">Registrar entrada</span>
+                          </p>
+                          <p className="hidden text-xs text-primary-foreground/80 sm:block">Captura hora actual y punto GPS</p>
                         </div>
                       </Button>
 
@@ -1240,25 +1367,28 @@ export default function Asistencia() {
                         type="button"
                         size="lg"
                         variant="outline"
-                        className="h-auto min-h-14 justify-start gap-3 rounded-2xl border-sky-200 bg-white"
+                        className="h-auto min-h-12 justify-center gap-2 rounded-lg border-sky-200 bg-white px-3 sm:min-h-14 sm:justify-start sm:gap-3 sm:rounded-2xl"
                         disabled={!currentUserOpenRecord || isLocationBusy}
                         onClick={() => void handleMark('salida')}
                       >
                         {locationAction === 'salida' ? <Loader2 className="h-5 w-5 animate-spin" /> : <LogOut className="h-5 w-5" />}
                         <div className="text-left">
-                          <p className="font-semibold">Registrar salida</p>
-                          <p className="text-xs text-muted-foreground">Cierra la jornada abierta y guarda tu ubicacion final</p>
+                          <p className="font-semibold">
+                            <span className="sm:hidden">Salida</span>
+                            <span className="hidden sm:inline">Registrar salida</span>
+                          </p>
+                          <p className="hidden text-xs text-muted-foreground sm:block">Cierra la jornada abierta y guarda tu ubicacion final</p>
                         </div>
                       </Button>
                     </div>
 
                     {currentUserOpenRecord && (
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4">
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-3 sm:rounded-2xl sm:p-4">
                         <div className="flex items-center gap-2 text-emerald-700">
                           <Activity className="h-4 w-4" />
                           <p className="font-medium">Jornada activa desde {formatTime(currentUserOpenRecord.entradaAt)}</p>
                         </div>
-                        <p className="mt-2 text-sm text-emerald-900">
+                        <p className="mt-2 hidden text-sm text-emerald-900 sm:block">
                           Entrada registrada en {formatCoordinates(currentUserOpenRecord.entradaLatitude, currentUserOpenRecord.entradaLongitude)} con {formatAccuracy(currentUserOpenRecord.entradaAccuracyMeters)}.
                         </p>
                       </div>
@@ -1268,19 +1398,22 @@ export default function Asistencia() {
               </CardContent>
             </Card>
 
-            <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
+            <div className="grid grid-cols-3 gap-2 sm:gap-4 xl:grid-cols-1">
               <Card className="shadow-sm">
-                <CardContent className="p-5">
+                <CardContent className="p-3 sm:p-5">
                   {loading ? (
-                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-14 w-full sm:h-16" />
                   ) : (
-                    <div className="flex items-center gap-4">
-                      <div className="rounded-2xl bg-sky-100 p-3 text-sky-700">
+                    <div className="flex flex-col items-center gap-1 text-center sm:flex-row sm:gap-4 sm:text-left">
+                      <div className="rounded-lg bg-sky-100 p-2 text-sky-700 sm:rounded-2xl sm:p-3">
                         <CalendarDays className="h-5 w-5" />
                       </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Mis registros en rango</p>
-                        <p className="text-2xl font-bold">{myRecords.length}</p>
+                      <div className="min-w-0">
+                        <p className="text-[11px] leading-tight text-muted-foreground sm:text-sm">
+                          <span className="sm:hidden">Registros</span>
+                          <span className="hidden sm:inline">Mis registros en rango</span>
+                        </p>
+                        <p className="text-xl font-bold sm:text-2xl">{myRecords.length}</p>
                       </div>
                     </div>
                   )}
@@ -1288,18 +1421,18 @@ export default function Asistencia() {
               </Card>
 
               <Card className="shadow-sm">
-                <CardContent className="p-5">
+                <CardContent className="p-3 sm:p-5">
                   {loading ? (
-                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-14 w-full sm:h-16" />
                   ) : (
-                    <div className="flex items-center gap-4">
-                      <div className="rounded-2xl bg-emerald-100 p-3 text-emerald-700">
+                    <div className="flex flex-col items-center gap-1 text-center sm:flex-row sm:gap-4 sm:text-left">
+                      <div className="rounded-lg bg-emerald-100 p-2 text-emerald-700 sm:rounded-2xl sm:p-3">
                         <Users className="h-5 w-5" />
                       </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Dias trabajados</p>
-                        <p className="text-2xl font-bold">{myWorkedDaysCount}</p>
-                        <p className="text-xs text-muted-foreground">Dentro del rango seleccionado</p>
+                      <div className="min-w-0">
+                        <p className="text-[11px] leading-tight text-muted-foreground sm:text-sm">Dias</p>
+                        <p className="text-xl font-bold sm:text-2xl">{myWorkedDaysCount}</p>
+                        <p className="hidden text-xs text-muted-foreground sm:block">Dentro del rango seleccionado</p>
                       </div>
                     </div>
                   )}
@@ -1307,20 +1440,23 @@ export default function Asistencia() {
               </Card>
 
               <Card className="shadow-sm">
-                <CardContent className="p-5">
+                <CardContent className="p-3 sm:p-5">
                   {loading ? (
-                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-14 w-full sm:h-16" />
                   ) : (
-                    <div className="flex items-center gap-4">
-                      <div className="rounded-2xl bg-violet-100 p-3 text-violet-700">
+                    <div className="flex flex-col items-center gap-1 text-center sm:flex-row sm:gap-4 sm:text-left">
+                      <div className="rounded-lg bg-violet-100 p-2 text-violet-700 sm:rounded-2xl sm:p-3">
                         <Clock3 className="h-5 w-5" />
                       </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Ultima salida</p>
-                        <p className="text-lg font-bold">
+                      <div className="min-w-0">
+                        <p className="text-[11px] leading-tight text-muted-foreground sm:text-sm">
+                          <span className="sm:hidden">Salida</span>
+                          <span className="hidden sm:inline">Ultima salida</span>
+                        </p>
+                        <p className="text-base font-bold sm:text-lg">
                           {latestMyClosedRecord?.salidaAt ? formatTime(latestMyClosedRecord.salidaAt) : '-'}
                         </p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="hidden text-xs text-muted-foreground sm:block">
                           {latestMyClosedRecord?.salidaAt ? formatDate(latestMyClosedRecord.workDate) : 'Sin cierre reciente'}
                         </p>
                       </div>
@@ -1332,13 +1468,13 @@ export default function Asistencia() {
           </div>
 
           <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-lg">Mi historial reciente</CardTitle>
-              <CardDescription>
+            <CardHeader className="p-4 pb-3 sm:p-6">
+              <CardTitle className="text-base sm:text-lg">Mi historial reciente</CardTitle>
+              <CardDescription className="hidden sm:block">
                 Historico personal de entradas y salidas almacenadas para {session?.user.nombre || 'tu cuenta'}.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
               <AttendanceTable
                 records={myRecords}
                 emptyMessage="Aun no tienes registros de asistencia en el rango seleccionado."

@@ -10,8 +10,10 @@ import multer from 'multer';
 import { z } from 'zod';
 import {
   changeSessionTenant,
+  clearDevAuthBypassLogoutCookie,
   clearSessionCookie,
   createAuthError,
+  createDevAuthBypassLogoutCookie,
   createSessionCookie,
   ensureUserAuthIdentitiesSchema,
   exchangeAuthTokenForSession,
@@ -2521,7 +2523,10 @@ app.post('/api/auth/exchange', async (req, res) => {
     const payload = authExchangeInputSchema.parse(req.body);
     const appSession = await exchangeAuthTokenForSession(payload.provider, payload.idToken);
 
-    res.setHeader('Set-Cookie', await createSessionCookie(appSession));
+    res.setHeader('Set-Cookie', [
+      await createSessionCookie(appSession),
+      clearDevAuthBypassLogoutCookie(),
+    ]);
     res.json(appSession);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -2536,7 +2541,10 @@ app.post('/api/auth/exchange', async (req, res) => {
 });
 
 app.post('/api/auth/logout', async (_req, res) => {
-  res.setHeader('Set-Cookie', clearSessionCookie());
+  res.setHeader('Set-Cookie', [
+    clearSessionCookie(),
+    createDevAuthBypassLogoutCookie(),
+  ]);
   res.status(204).send();
 });
 
