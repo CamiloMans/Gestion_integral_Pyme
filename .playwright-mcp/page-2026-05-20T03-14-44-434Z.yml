@@ -1,0 +1,113 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - region "Notifications (F8)":
+      - list
+    - region "Notifications alt+T"
+    - generic [ref=e3]:
+      - complementary [ref=e4]:
+        - generic [ref=e5]:
+          - img "RekoSol Logo" [ref=e8]
+          - navigation [ref=e9]:
+            - button "Gestion de Gastos" [expanded] [ref=e10] [cursor=pointer]:
+              - img [ref=e11]
+              - generic [ref=e13]: Gestion de Gastos
+              - img [ref=e14]
+            - generic [ref=e16]:
+              - link "Reportes" [ref=e17] [cursor=pointer]:
+                - /url: /
+                - img [ref=e18]
+                - text: Reportes
+              - link "Gastos" [ref=e20] [cursor=pointer]:
+                - /url: /gastos
+                - img [ref=e21]
+                - text: Gastos
+              - link "Configuracion" [ref=e24] [cursor=pointer]:
+                - /url: /empresas
+                - img [ref=e25]
+                - text: Configuracion
+            - button "Control de Proyectos" [ref=e28] [cursor=pointer]:
+              - img [ref=e29]
+              - generic [ref=e31]: Control de Proyectos
+              - img [ref=e32]
+            - button "Control de Asistencia" [ref=e34] [cursor=pointer]:
+              - img [ref=e35]
+              - generic [ref=e38]: Control de Asistencia
+              - img [ref=e39]
+          - button "UL Usuario Local Rekosol Local" [ref=e42] [cursor=pointer]:
+            - generic [ref=e43]:
+              - generic [ref=e45]: UL
+              - generic [ref=e46]:
+                - generic [ref=e47]: Usuario Local
+                - generic [ref=e48]: Rekosol Local
+            - img
+      - main [ref=e49]:
+        - generic [ref=e50]:
+          - generic [ref=e51]:
+            - generic [ref=e52]:
+              - heading "Reportes" [level=1] [ref=e53]
+              - paragraph [ref=e54]: Resumen anual 2026
+            - generic [ref=e56]:
+              - group [ref=e57]:
+                - radio "Mensual" [ref=e58] [cursor=pointer]
+                - radio "Anual" [checked] [ref=e59] [cursor=pointer]
+              - combobox [ref=e60] [cursor=pointer]:
+                - img [ref=e61]
+                - generic: "2026"
+                - img [ref=e63]
+              - combobox [ref=e65] [cursor=pointer]:
+                - img [ref=e66]
+                - generic: Todos los proyectos
+                - img [ref=e68]
+          - generic [ref=e70]:
+            - generic [ref=e72]:
+              - img [ref=e74]
+              - generic [ref=e77]:
+                - paragraph [ref=e78]: Total Anual
+                - paragraph [ref=e79]: $0
+            - generic [ref=e81]:
+              - img [ref=e83]
+              - generic [ref=e85]:
+                - paragraph [ref=e86]: Promedio Mensual
+                - paragraph [ref=e87]: $0
+            - generic [ref=e89]:
+              - img [ref=e91]
+              - generic [ref=e94]:
+                - paragraph [ref=e95]: Mes Mayor Gasto
+                - paragraph [ref=e96]: ENE
+            - generic [ref=e98]:
+              - img [ref=e100]
+              - generic [ref=e103]:
+                - paragraph [ref=e104]: Mes Menor Gasto
+                - paragraph [ref=e105]: ENE
+          - generic [ref=e106]:
+            - generic [ref=e107]:
+              - img [ref=e108]
+              - heading "Evolucion Mensual 2026" [level=3] [ref=e111]
+            - img [ref=e115]:
+              - generic [ref=e120]:
+                - generic [ref=e122]: ene
+                - generic [ref=e124]: feb
+                - generic [ref=e126]: mar
+                - generic [ref=e128]: abr
+                - generic [ref=e130]: may
+                - generic [ref=e132]: jun
+                - generic [ref=e134]: jul
+                - generic [ref=e136]: ago
+                - generic [ref=e138]: sep
+                - generic [ref=e140]: oct
+                - generic [ref=e142]: nov
+                - generic [ref=e144]: dic
+              - generic [ref=e146]:
+                - generic [ref=e148]: $0.0M
+                - generic [ref=e150]: $0.0M
+                - generic [ref=e152]: $0.0M
+                - generic [ref=e154]: $0.0M
+                - generic [ref=e156]: $0.0M
+          - generic [ref=e157]:
+            - generic [ref=e158]:
+              - heading "Categorias" [level=3] [ref=e159]
+              - paragraph [ref=e160]: No hay gastos para las categorias del periodo seleccionado.
+            - generic [ref=e161]:
+              - heading "Empresas" [level=3] [ref=e162]
+              - paragraph [ref=e163]: No hay gastos para las empresas del periodo seleccionado.
+  - generic [ref=e164]: $0.0M

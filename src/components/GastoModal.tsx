@@ -343,12 +343,31 @@ export function GastoModal({
     const montoTotalValue = Number.isFinite(montoTotalParsed) ? montoTotalParsed : 0;
     const montoNetoValue = aplicaImpuesto && Number.isFinite(montoNetoParsed) ? montoNetoParsed : undefined;
     const ivaValue = aplicaImpuesto && Number.isFinite(montoIvaParsed) ? montoIvaParsed : undefined;
+    const numeroDocumentoValue = numeroDocumento.trim().toUpperCase();
+    const validationErrors = [
+      !fecha.trim() ? 'Fecha' : null,
+      !categoria ? 'Categoria' : null,
+      !tipoDocumento ? 'Tipo de documento' : null,
+      !empresaId ? 'Empresa' : null,
+      !numeroDocumentoValue ? 'Numero de documento' : null,
+      montoTotalValue <= 0 ? 'Monto total' : null,
+      esOtros && !comentarioTipoDocumento.trim() ? 'Especificar tipo de documento' : null,
+    ].filter((item): item is string => Boolean(item));
+
+    if (validationErrors.length > 0) {
+      toast({
+        title: 'Campos obligatorios',
+        description: `Completa antes de guardar: ${validationErrors.join(', ')}.`,
+        variant: 'destructive',
+      });
+      return;
+    }
 
     await onSave({
       fecha,
       categoria,
       tipoDocumento,
-      numeroDocumento,
+      numeroDocumento: numeroDocumentoValue,
       empresaId,
       proyectoId: proyectoId || undefined,
       monto: montoTotalValue,
@@ -631,12 +650,13 @@ export function GastoModal({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="numeroDocumento">Numero de Documento</Label>
+                <Label htmlFor="numeroDocumento">Numero de Documento *</Label>
                 <Input
                   id="numeroDocumento"
                   placeholder="Ej: 001234"
                   value={numeroDocumento}
-                  onChange={(e) => setNumeroDocumento(e.target.value)}
+                  onChange={(e) => setNumeroDocumento(e.target.value.toUpperCase())}
+                  required
                 />
               </div>
             </div>

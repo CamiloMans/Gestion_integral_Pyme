@@ -12,6 +12,8 @@ type TipoDocumentoFormData = {
   nombre: string;
   descripcion?: string;
   activo?: boolean;
+  tieneImpuestos?: boolean;
+  valorImpuestos?: number;
 };
 
 interface TipoDocumentoModalProps {
@@ -25,6 +27,8 @@ export function TipoDocumentoModal({ open, onClose, onSave, tipoDocumento }: Tip
   const [nombre, setNombre] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [activo, setActivo] = useState(true);
+  const [tieneImpuestos, setTieneImpuestos] = useState(false);
+  const [valorImpuestos, setValorImpuestos] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -32,10 +36,14 @@ export function TipoDocumentoModal({ open, onClose, onSave, tipoDocumento }: Tip
       setNombre(tipoDocumento.nombre ? tipoDocumento.nombre.toUpperCase() : '');
       setDescripcion(tipoDocumento.descripcion ? tipoDocumento.descripcion.toUpperCase() : '');
       setActivo(tipoDocumento.activo ?? true);
+      setTieneImpuestos(tipoDocumento.tieneImpuestos ?? false);
+      setValorImpuestos(tipoDocumento.valorImpuestos != null ? String(tipoDocumento.valorImpuestos) : '');
     } else {
       setNombre('');
       setDescripcion('');
       setActivo(true);
+      setTieneImpuestos(false);
+      setValorImpuestos('');
     }
   }, [tipoDocumento, open]);
 
@@ -48,6 +56,8 @@ export function TipoDocumentoModal({ open, onClose, onSave, tipoDocumento }: Tip
         nombre: nombre.trim().toUpperCase(),
         descripcion: descripcion.trim() ? descripcion.trim().toUpperCase() : undefined,
         activo,
+        tieneImpuestos,
+        valorImpuestos: tieneImpuestos && valorImpuestos ? parseFloat(valorImpuestos) : undefined,
       });
       onClose();
     } catch (error) {
@@ -95,6 +105,33 @@ export function TipoDocumentoModal({ open, onClose, onSave, tipoDocumento }: Tip
               style={{ textTransform: 'uppercase' }}
             />
           </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="tieneImpuestos">Tiene Impuestos</Label>
+              <Switch
+                id="tieneImpuestos"
+                checked={tieneImpuestos}
+                onCheckedChange={setTieneImpuestos}
+              />
+            </div>
+          </div>
+
+          {tieneImpuestos && (
+            <div className="space-y-2">
+              <Label htmlFor="valorImpuestos">Valor Impuestos (decimal, ej: 0.19 = 19%)</Label>
+              <Input
+                id="valorImpuestos"
+                type="number"
+                step="0.01"
+                min="0"
+                max="1"
+                placeholder="0.19"
+                value={valorImpuestos}
+                onChange={(e) => setValorImpuestos(e.target.value)}
+              />
+            </div>
+          )}
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">

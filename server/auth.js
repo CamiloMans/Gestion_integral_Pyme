@@ -57,6 +57,16 @@ function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function buildMissingInvitationMessage(email) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) {
+    return 'Tu cuenta no tiene una invitacion activa en Rekosol.';
+  }
+
+  return `No hay una invitacion activa para ${normalizedEmail}. La invitacion debe usar exactamente el mismo correo que entrega Google o Microsoft.`;
+}
+
 function normalizeAuthProviders(value) {
   let rawProviders = [];
 
@@ -650,7 +660,7 @@ export async function exchangeAuthTokenForSession(provider, idToken) {
     user = await findUserByEmail(authProfile.email);
 
     if (!user) {
-      throw createAuthError('Tu cuenta no tiene una invitacion activa en Rekosol.', 403);
+      throw createAuthError(buildMissingInvitationMessage(authProfile.email), 403);
     }
   }
 

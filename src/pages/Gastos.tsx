@@ -15,6 +15,7 @@ import { DetalleGastoDialog } from '@/components/DetalleGastoDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { toast } from '@/hooks/use-toast';
 import { postgresApi, type BootstrapResponse, type CategoriaOption, type TipoDocumentoOption } from '@/services/postgresApi';
+import { useAppAuth } from '@/hooks/useAppAuth';
 
 const PAGE_SIZE = 50;
 const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
@@ -42,6 +43,7 @@ function sortByRazonSocial<T extends { razonSocial: string }>(items: T[]) {
 }
 
 export default function Gastos() {
+  const { session } = useAppAuth();
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [gastos, setGastos] = useState<Gasto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,7 +313,12 @@ export default function Gastos() {
 
   const nombreRegistradorActual = useMemo(() => {
     if (!editingGasto) {
-      return 'Persona no identificada';
+      return session?.user?.nombre || 'Persona no identificada';
+    }
+
+    const nombreDesdeCreador = (editingGasto.creadoPorNombre || '').trim();
+    if (nombreDesdeCreador) {
+      return nombreDesdeCreador;
     }
 
     const nombreDesdeGasto = (editingGasto.colaboradorNombre || '').trim();
@@ -324,7 +331,7 @@ export default function Gastos() {
     );
 
     return colaborador?.nombre || 'Persona no identificada';
-  }, [colaboradoresData, editingGasto]);
+  }, [colaboradoresData, editingGasto, session]);
 
   const mesesDisponibles = useMemo(() => {
     const fechas = new Set<string>();
@@ -610,8 +617,8 @@ export default function Gastos() {
                       <TableCell>
                         <div>
                           <p className="text-muted-foreground">{formatDate(gasto.fecha)}</p>
-                          {nombreColaborador && (
-                            <p className="font-medium text-sm mt-1">{nombreColaborador}</p>
+                          {gasto.creadoPorNombre && (
+                            <p className="font-medium text-sm mt-1">{gasto.creadoPorNombre}</p>
                           )}
                         </div>
                       </TableCell>

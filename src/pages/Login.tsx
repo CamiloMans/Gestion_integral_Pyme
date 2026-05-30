@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAppAuth } from '@/hooks/useAppAuth';
-import { googleClientId } from '@/lib/authClientConfig';
+import { googleClientId, googleLoginHint } from '@/lib/authClientConfig';
 
 const googleClientConfigured = Boolean(googleClientId);
 const socialButtonClassName = 'relative h-12 w-full justify-center rounded-md border border-[#d1d1d1] bg-white px-4 text-[15px] font-semibold text-[#1f1f1f] shadow-sm transition-all hover:border-[#b5b5b5] hover:bg-[#f7f7f7] hover:text-[#111111] focus-visible:ring-[#2563eb] disabled:border-[#d9d9d9] disabled:bg-[#f3f3f3] disabled:text-[#6b6b6b]';
@@ -260,11 +260,12 @@ export default function Login() {
                         onSuccess={(response) => {
                           void handleGoogleSuccess(response);
                         }}
+                        login_hint={googleLoginHint || undefined}
                         shape="rectangular"
                         size="large"
                         text="continue_with"
                         theme="outline"
-                        width="100%"
+                        width="400"
                       />
                     </div>
                   </div>

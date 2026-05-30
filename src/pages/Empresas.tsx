@@ -364,7 +364,7 @@ export default function Empresas() {
     }
   };
 
-  const handleSaveTipoDocumento = async (payload: Omit<TipoDocumentoOption, 'id' | 'createdAt' | 'tieneImpuestos' | 'valorImpuestos'>) => {
+  const handleSaveTipoDocumento = async (payload: Omit<TipoDocumentoOption, 'id' | 'createdAt'>) => {
     try {
       if (editingTipoDocumento) {
         await postgresApi.updateTipoDocumento(editingTipoDocumento.id, payload);
@@ -580,13 +580,15 @@ export default function Empresas() {
 
     if (vista === 'tiposDocumento') {
       if (filteredTiposDocumento.length === 0) {
-        return <TableRow><TableCell colSpan={4} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar tipos de documento desde PostgreSQL' : 'No hay tipos de documento para mostrar'}</TableCell></TableRow>;
+        return <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar tipos de documento desde PostgreSQL' : 'No hay tipos de documento para mostrar'}</TableCell></TableRow>;
       }
 
       return filteredTiposDocumento.map((item) => (
         <TableRow key={item.id}>
           <TableCell><div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted"><FileText size={18} className="text-muted-foreground" /></div><span className="font-medium">{item.nombre}</span></div></TableCell>
           <TableCell>{item.descripcion || '-'}</TableCell>
+          <TableCell><span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${item.tieneImpuestos ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>{item.tieneImpuestos ? 'Sí' : 'No'}</span></TableCell>
+          <TableCell>{item.tieneImpuestos && item.valorImpuestos != null ? `${(item.valorImpuestos * 100).toFixed(1)}%` : '-'}</TableCell>
           <TableCell>{renderStatusBadge(item.activo)}</TableCell>
           <TableCell><div className="flex justify-center gap-1"><Button variant="ghost" size="icon" onClick={() => { setEditingTipoDocumento(item); setModalOpen(true); }}><Pencil size={16} /></Button><Button variant="ghost" size="icon" type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteRequest({ id: item.id, type: 'tiposDocumento', label: item.nombre }); }}><Trash2 size={16} className="text-destructive" /></Button></div></TableCell>
         </TableRow>
@@ -649,7 +651,7 @@ export default function Empresas() {
                 {vista === 'colaboradores' && (<><TableHead className="font-semibold">COLABORADOR</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">TELEFONO</TableHead><TableHead className="font-semibold">CARGO</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead></>)}
                 {vista === 'categorias' && (<><TableHead className="font-semibold">CATEGORIA</TableHead><TableHead className="font-semibold">COLOR</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
-                {vista === 'tiposDocumento' && (<><TableHead className="font-semibold">TIPO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
+                {vista === 'tiposDocumento' && (<><TableHead className="font-semibold">TIPO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">TIENE IMPUESTOS</TableHead><TableHead className="font-semibold">VALOR IMPUESTOS</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumentoProyecto' && (<><TableHead className="font-semibold">DOCUMENTO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
               </TableRow>
             </TableHeader>

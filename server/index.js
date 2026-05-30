@@ -73,6 +73,7 @@ const PUBLIC_API_PATHS = new Set([
   '/api/health',
   '/api/auth/exchange',
   '/api/auth/logout',
+  '/api/dev/clear-bypass-logout',
 ]);
 let controlPagosHitosSchemaPromise = null;
 let controlPagosDocumentosSchemaPromise = null;
@@ -177,6 +178,8 @@ const tipoDocumentoInputSchema = z.object({
   nombre: z.string().trim().min(1),
   descripcion: z.string().optional().nullable(),
   activo: z.boolean().optional().nullable(),
+  tieneImpuestos: z.boolean().optional().nullable(),
+  valorImpuestos: z.number().min(0).max(1).optional().nullable(),
 });
 
 const tipoDocumentoProyectoInputSchema = z.object({
@@ -185,19 +188,47 @@ const tipoDocumentoProyectoInputSchema = z.object({
   activo: z.boolean().optional().nullable(),
 });
 
+const requiredTrimmedString = (label, requiredMessage = `${label} es obligatorio.`) => z.preprocess(
+  (value) => (typeof value === 'string' ? value.trim() : value),
+  z.string({
+    required_error: requiredMessage,
+    invalid_type_error: requiredMessage,
+  }).min(1, requiredMessage),
+);
+const requiredUuid = (label, requiredMessage) => requiredTrimmedString(label, requiredMessage).pipe(
+  z.string().uuid(`${label} no es valido.`),
+);
+const optionalUuid = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed || null;
+    }
+
+    return value;
+  },
+  z.string().uuid().optional().nullable(),
+);
+
 const gastoInputSchema = z.object({
-  fecha: z.string().min(1),
-  empresaId: z.string().uuid(),
-  categoria: z.string().uuid().optional().nullable(),
-  tipoDocumento: z.string().uuid().optional().nullable(),
-  numeroDocumento: z.string().default(''),
+  fecha: requiredTrimmedString('Fecha', 'Fecha es obligatoria.').pipe(
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha debe tener formato YYYY-MM-DD.'),
+  ),
+  empresaId: requiredUuid('Empresa', 'Empresa es obligatoria.'),
+  categoria: requiredUuid('Categoria', 'Categoria es obligatoria.'),
+  tipoDocumento: requiredUuid('Tipo de documento', 'Tipo de documento es obligatorio.'),
+  numeroDocumento: requiredTrimmedString('Numero de documento', 'Numero de documento es obligatorio.'),
   monto: z.coerce.number().optional(),
   montoNeto: z.coerce.number().optional().nullable(),
   iva: z.coerce.number().optional().nullable(),
   montoTotal: z.coerce.number().optional(),
   detalle: z.string().optional().nullable(),
-  proyectoId: z.string().uuid().optional().nullable(),
-  colaboradorId: z.string().uuid().optional().nullable(),
+  proyectoId: optionalUuid,
+  colaboradorId: optionalUuid,
   comentarioTipoDocumento: z.string().optional().nullable(),
   existingAttachmentIds: z.array(z.string().uuid()).optional().default([]),
 });
@@ -281,6 +312,15 @@ function normalizeText(value, { uppercase = false, lowercase = false } = {}) {
 function normalizeNullableText(value, options) {
   const normalized = normalizeText(value, options);
   return normalized || null;
+}
+
+function normalizeComparableText(value) {
+  return normalizeText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeNumeric(value) {
@@ -972,6 +1012,8 @@ function mapTipoDocumento(row) {
     nombre: row.nombre,
     descripcion: row.descripcion || undefined,
     activo: getRowActiveValue(row),
+    tieneImpuestos: row.tiene_impuesto ?? false,
+    valorImpuestos: row.valor_impuesto != null ? Number(row.valor_impuesto) : undefined,
   };
 }
 
@@ -1071,6 +1113,10 @@ function mapGasto(row) {
     colaboradorId: row.colaborador_id || undefined,
     colaboradorNombre: row.colaborador_nombre || undefined,
     comentarioTipoDocumento: row.comentario_tipo_documento || undefined,
+    creadoPor: row.created_by || undefined,
+    creadoPorNombre: row.created_by_nombre || undefined,
+    actualizadoPor: row.updated_by || undefined,
+    actualizadoPorNombre: row.updated_by_nombre || undefined,
     archivosAdjuntos: archivosAdjuntosRaw
       .filter((archivo) => archivo && archivo.id && archivo.nombre)
       .map((archivo) => ({
@@ -1406,6 +1452,66 @@ async function ensureGastoDocumentosSchema() {
 
   gastoDocumentosSchemaPromise = (async () => {
     await ensureDocumentosSchema();
+
+    await query(`
+      do $$
+      begin
+        if not exists (
+          select 1
+          from pg_constraint
+          where conname = 'chk_fct_gasto_empresa_required'
+            and conrelid = 'fct_gasto'::regclass
+        ) then
+          alter table fct_gasto
+          add constraint chk_fct_gasto_empresa_required
+          check (empresa_id is not null) not valid;
+        end if;
+
+        if not exists (
+          select 1
+          from pg_constraint
+          where conname = 'chk_fct_gasto_categoria_required'
+            and conrelid = 'fct_gasto'::regclass
+        ) then
+          alter table fct_gasto
+          add constraint chk_fct_gasto_categoria_required
+          check (categoria_id is not null) not valid;
+        end if;
+
+        if not exists (
+          select 1
+          from pg_constraint
+          where conname = 'chk_fct_gasto_tipo_documento_required'
+            and conrelid = 'fct_gasto'::regclass
+        ) then
+          alter table fct_gasto
+          add constraint chk_fct_gasto_tipo_documento_required
+          check (tipo_documento_id is not null) not valid;
+        end if;
+
+        if not exists (
+          select 1
+          from pg_constraint
+          where conname = 'chk_fct_gasto_numero_documento_required'
+            and conrelid = 'fct_gasto'::regclass
+        ) then
+          alter table fct_gasto
+          add constraint chk_fct_gasto_numero_documento_required
+          check (length(btrim(numero_documento)) > 0) not valid;
+        end if;
+
+        if not exists (
+          select 1
+          from pg_constraint
+          where conname = 'chk_fct_gasto_monto_total_positive'
+            and conrelid = 'fct_gasto'::regclass
+        ) then
+          alter table fct_gasto
+          add constraint chk_fct_gasto_monto_total_positive
+          check (monto_total > 0) not valid;
+        end if;
+      end $$;
+    `);
 
     await query(`
       create table if not exists ${GASTO_DOCUMENTOS_TABLE} (
@@ -2018,6 +2124,8 @@ async function fetchGastos(tenantId) {
       select
         g.*,
         c.nombre as colaborador_nombre,
+        uc.nombre as created_by_nombre,
+        uu.nombre as updated_by_nombre,
         coalesce(
           json_agg(
             json_build_object(
@@ -2033,6 +2141,10 @@ async function fetchGastos(tenantId) {
       from fct_gasto g
       left join dim_colaborador c
         on c.id = g.colaborador_id
+      left join users uc
+        on uc.id = g.created_by
+      left join users uu
+        on uu.id = g.updated_by
       left join ${GASTO_DOCUMENTOS_TABLE} gd
         on gd.tenant_id = g.tenant_id
        and gd.gasto_id = g.id
@@ -2040,7 +2152,7 @@ async function fetchGastos(tenantId) {
         on d.tenant_id = g.tenant_id
        and d.id = gd.documento_id
       where g.tenant_id = $1
-      group by g.id, c.nombre
+      group by g.id, c.nombre, uc.nombre, uu.nombre
       order by g.fecha desc, g.created_at desc
     `,
     [tenantId],
@@ -2057,6 +2169,8 @@ async function fetchGastoById(tenantId, gastoId) {
       select
         g.*,
         c.nombre as colaborador_nombre,
+        uc.nombre as created_by_nombre,
+        uu.nombre as updated_by_nombre,
         coalesce(
           json_agg(
             json_build_object(
@@ -2072,6 +2186,10 @@ async function fetchGastoById(tenantId, gastoId) {
       from fct_gasto g
       left join dim_colaborador c
         on c.id = g.colaborador_id
+      left join users uc
+        on uc.id = g.created_by
+      left join users uu
+        on uu.id = g.updated_by
       left join ${GASTO_DOCUMENTOS_TABLE} gd
         on gd.tenant_id = g.tenant_id
        and gd.gasto_id = g.id
@@ -2080,13 +2198,125 @@ async function fetchGastoById(tenantId, gastoId) {
        and d.id = gd.documento_id
       where g.tenant_id = $1
         and g.id = $2
-      group by g.id, c.nombre
+      group by g.id, c.nombre, uc.nombre, uu.nombre
       limit 1
     `,
     [tenantId, gastoId],
   );
 
   return result.rows[0] ? mapGasto(result.rows[0]) : null;
+}
+
+async function requireDimensionForGasto({
+  tenantId,
+  tableName,
+  itemId,
+  label,
+  required = true,
+  requiredMessage = `${label} es obligatorio.`,
+  select = 'id',
+}) {
+  const normalizedId = toNullable(itemId);
+
+  if (!normalizedId) {
+    if (required) {
+      throw createAuthError(requiredMessage, 400);
+    }
+
+    return null;
+  }
+
+  const activeColumn = await getActiveColumnName(tableName);
+  const activeFilter = activeColumn ? `and ${activeColumn} = true` : '';
+  const result = await query(
+    `
+      select ${select}
+      from ${tableName}
+      where tenant_id = $1
+        and id = $2
+        ${activeFilter}
+      limit 1
+    `,
+    [tenantId, normalizedId],
+  );
+
+  if (!result.rows[0]) {
+    throw createAuthError(`${label} no existe o no esta activo para este tenant.`, 400);
+  }
+
+  return result.rows[0];
+}
+
+async function normalizeGastoForPersistence(tenantId, payload) {
+  const montoTotal = normalizeNumeric(payload.montoTotal ?? payload.monto);
+
+  if (montoTotal === null || montoTotal <= 0) {
+    throw createAuthError('Monto total es obligatorio y debe ser mayor a 0.', 400);
+  }
+
+  const numeroDocumento = normalizeText(payload.numeroDocumento, { uppercase: true });
+  if (!numeroDocumento) {
+    throw createAuthError('Numero de documento es obligatorio.', 400);
+  }
+
+  await requireDimensionForGasto({
+    tenantId,
+    tableName: 'dim_empresa',
+    itemId: payload.empresaId,
+    label: 'Empresa',
+    requiredMessage: 'Empresa es obligatoria.',
+  });
+  await requireDimensionForGasto({
+    tenantId,
+    tableName: 'dim_categoria',
+    itemId: payload.categoria,
+    label: 'Categoria',
+    requiredMessage: 'Categoria es obligatoria.',
+  });
+  const tipoDocumentoRow = await requireDimensionForGasto({
+    tenantId,
+    tableName: 'dim_tipo_documento',
+    itemId: payload.tipoDocumento,
+    label: 'Tipo de documento',
+    requiredMessage: 'Tipo de documento es obligatorio.',
+    select: 'id, nombre',
+  });
+  await requireDimensionForGasto({
+    tenantId,
+    tableName: 'dim_proyecto',
+    itemId: payload.proyectoId,
+    label: 'Proyecto',
+    required: false,
+  });
+  await requireDimensionForGasto({
+    tenantId,
+    tableName: 'dim_colaborador',
+    itemId: payload.colaboradorId,
+    label: 'Colaborador',
+    required: false,
+  });
+
+  const tipoDocumentoNombre = normalizeComparableText(tipoDocumentoRow?.nombre);
+  const comentarioTipoDocumento = normalizeNullableText(payload.comentarioTipoDocumento, { uppercase: true });
+
+  if ((tipoDocumentoNombre === 'otro' || tipoDocumentoNombre === 'otros') && !comentarioTipoDocumento) {
+    throw createAuthError('Debes especificar el tipo de documento cuando seleccionas Otro.', 400);
+  }
+
+  return {
+    fecha: payload.fecha,
+    empresaId: payload.empresaId,
+    categoriaId: payload.categoria,
+    tipoDocumentoId: payload.tipoDocumento,
+    numeroDocumento,
+    montoNeto: normalizeNumeric(payload.montoNeto),
+    iva: normalizeNumeric(payload.iva),
+    montoTotal,
+    detalle: normalizeNullableText(payload.detalle, { uppercase: true }),
+    proyectoId: toNullable(payload.proyectoId),
+    colaboradorId: toNullable(payload.colaboradorId),
+    comentarioTipoDocumento,
+  };
 }
 
 async function fetchGastoDocumentos(tenantId, gastoId, db = query) {
@@ -2459,10 +2689,22 @@ async function fetchDocumentoHitoStorageInfo(tenantId, documentoHitoId) {
 }
 
 function sendErrorResponse(res, error, fallbackMessage) {
-  const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500;
+  const persistenceErrorMessages = {
+    '23502': 'Faltan campos obligatorios para guardar el registro.',
+    '23503': 'Uno de los valores seleccionados no existe o no pertenece al tenant activo.',
+    '23514': 'El registro no cumple los campos obligatorios definidos en la base de datos.',
+    '22P02': 'Uno de los identificadores enviados no es valido.',
+    '22007': 'La fecha enviada no es valida.',
+    '22008': 'La fecha enviada no es valida.',
+  };
+  const isPersistenceValidationError = Object.hasOwn(persistenceErrorMessages, String(error?.code || ''));
+  const statusCode = typeof error?.statusCode === 'number'
+    ? error.statusCode
+    : (isPersistenceValidationError ? 400 : 500);
 
   res.status(statusCode).json({
-    error: error instanceof Error ? error.message : fallbackMessage,
+    error: persistenceErrorMessages[String(error?.code || '')]
+      || (error instanceof Error ? error.message : fallbackMessage),
   });
 }
 
@@ -2516,6 +2758,15 @@ app.use(async (req, res, next) => {
   } catch (error) {
     sendErrorResponse(res, error, 'No se pudo validar la sesion actual.');
   }
+});
+
+app.post('/api/dev/clear-bypass-logout', (_req, res) => {
+  if (isProduction) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  res.setHeader('Set-Cookie', clearDevAuthBypassLogoutCookie());
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/exchange', async (req, res) => {
@@ -3313,12 +3564,14 @@ app.post('/api/tipos-documento', async (req, res) => {
     const tenant = await getTenant();
     const payload = tipoDocumentoInputSchema.parse(req.body);
     const activeColumn = await getActiveColumnName('dim_tipo_documento');
-    const columns = ['id', 'tenant_id', 'nombre', 'descripcion'];
+    const columns = ['id', 'tenant_id', 'nombre', 'descripcion', 'tiene_impuesto', 'valor_impuesto'];
     const values = [
       randomUUID(),
       tenant.id,
       normalizeText(payload.nombre, { uppercase: true }),
       normalizeNullableText(payload.descripcion, { uppercase: true }),
+      payload.tieneImpuestos ?? false,
+      payload.tieneImpuestos ? (payload.valorImpuestos ?? null) : null,
     ];
 
     if (activeColumn) {
@@ -3362,11 +3615,13 @@ app.put('/api/tipos-documento/:id', async (req, res) => {
       req.params.id,
       normalizeText(payload.nombre, { uppercase: true }),
       normalizeNullableText(payload.descripcion, { uppercase: true }),
+      payload.tieneImpuestos ?? false,
+      payload.tieneImpuestos ? (payload.valorImpuestos ?? null) : null,
     ];
 
     let activeFragment = '';
     if (activeColumn) {
-      activeFragment = `,\n          ${activeColumn} = $5`;
+      activeFragment = `,\n          ${activeColumn} = $7`;
       values.push(payload.activo ?? true);
     }
 
@@ -3375,7 +3630,9 @@ app.put('/api/tipos-documento/:id', async (req, res) => {
         update dim_tipo_documento
         set
           nombre = $3,
-          descripcion = $4${activeFragment},
+          descripcion = $4,
+          tiene_impuesto = $5,
+          valor_impuesto = $6${activeFragment},
           updated_at = now()
         where tenant_id = $1
           and id = $2
@@ -4229,12 +4486,8 @@ app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
     await ensureGastoDocumentosSchema();
 
     const payload = gastoInputSchema.parse(parseGastoPayload(req));
-    const montoTotal = normalizeNumeric(payload.montoTotal ?? payload.monto);
+    const gastoFields = await normalizeGastoForPersistence(tenant.id, payload);
     const uploadedFilesInput = Array.isArray(req.files) ? req.files : [];
-
-    if (montoTotal === null) {
-      return res.status(400).json({ error: 'montoTotal es obligatorio' });
-    }
 
     const gastoId = randomUUID();
     const uploadedFiles = [];
@@ -4245,7 +4498,7 @@ app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
         fileName: file.originalname,
         mimeType: file.mimetype,
         folder: 'gastos',
-        projectId: payload.proyectoId,
+        projectId: gastoFields.proyectoId,
         recordId: gastoId,
       }));
     }
@@ -4271,27 +4524,29 @@ app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
             detalle,
             proyecto_id,
             colaborador_id,
-            comentario_tipo_documento
+            comentario_tipo_documento,
+            created_by
           )
           values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
           )
         `,
         [
           gastoId,
           tenant.id,
-          payload.fecha,
-          payload.empresaId,
-          toNullable(payload.categoria),
-          toNullable(payload.tipoDocumento),
-          payload.numeroDocumento ?? '',
-          normalizeNumeric(payload.montoNeto),
-          normalizeNumeric(payload.iva),
-          montoTotal,
-          toNullable(payload.detalle),
-          toNullable(payload.proyectoId),
-          toNullable(payload.colaboradorId),
-          toNullable(payload.comentarioTipoDocumento),
+          gastoFields.fecha,
+          gastoFields.empresaId,
+          gastoFields.categoriaId,
+          gastoFields.tipoDocumentoId,
+          gastoFields.numeroDocumento,
+          gastoFields.montoNeto,
+          gastoFields.iva,
+          gastoFields.montoTotal,
+          gastoFields.detalle,
+          gastoFields.proyectoId,
+          gastoFields.colaboradorId,
+          gastoFields.comentarioTipoDocumento,
+          req.auth?.user?.id || null,
         ],
       );
 
@@ -4322,9 +4577,7 @@ app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Error al crear gasto',
-    });
+    sendErrorResponse(res, error, 'Error al crear gasto');
   }
 });
 
@@ -4334,12 +4587,8 @@ app.put('/api/gastos/:id', maybeHandleMultipartUploads, async (req, res) => {
     await ensureGastoDocumentosSchema();
 
     const payload = gastoInputSchema.parse(parseGastoPayload(req));
-    const montoTotal = normalizeNumeric(payload.montoTotal ?? payload.monto);
+    const gastoFields = await normalizeGastoForPersistence(tenant.id, payload);
     const uploadedFilesInput = Array.isArray(req.files) ? req.files : [];
-
-    if (montoTotal === null) {
-      return res.status(400).json({ error: 'montoTotal es obligatorio' });
-    }
 
     const uploadedFiles = [];
 
@@ -4349,7 +4598,7 @@ app.put('/api/gastos/:id', maybeHandleMultipartUploads, async (req, res) => {
         fileName: file.originalname,
         mimeType: file.mimetype,
         folder: 'gastos',
-        projectId: payload.proyectoId,
+        projectId: gastoFields.proyectoId,
         recordId: req.params.id,
       }));
     }
@@ -4376,6 +4625,7 @@ app.put('/api/gastos/:id', maybeHandleMultipartUploads, async (req, res) => {
             proyecto_id = $12,
             colaborador_id = $13,
             comentario_tipo_documento = $14,
+            updated_by = $15,
             updated_at = now()
           where tenant_id = $1
             and id = $2
@@ -4383,18 +4633,19 @@ app.put('/api/gastos/:id', maybeHandleMultipartUploads, async (req, res) => {
         [
           tenant.id,
           req.params.id,
-          payload.fecha,
-          payload.empresaId,
-          toNullable(payload.categoria),
-          toNullable(payload.tipoDocumento),
-          payload.numeroDocumento ?? '',
-          normalizeNumeric(payload.montoNeto),
-          normalizeNumeric(payload.iva),
-          montoTotal,
-          toNullable(payload.detalle),
-          toNullable(payload.proyectoId),
-          toNullable(payload.colaboradorId),
-          toNullable(payload.comentarioTipoDocumento),
+          gastoFields.fecha,
+          gastoFields.empresaId,
+          gastoFields.categoriaId,
+          gastoFields.tipoDocumentoId,
+          gastoFields.numeroDocumento,
+          gastoFields.montoNeto,
+          gastoFields.iva,
+          gastoFields.montoTotal,
+          gastoFields.detalle,
+          gastoFields.proyectoId,
+          gastoFields.colaboradorId,
+          gastoFields.comentarioTipoDocumento,
+          req.auth?.user?.id || null,
         ],
       );
 
@@ -4455,9 +4706,7 @@ app.put('/api/gastos/:id', maybeHandleMultipartUploads, async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Error al actualizar gasto',
-    });
+    sendErrorResponse(res, error, 'Error al actualizar gasto');
   }
 });
 
@@ -4595,6 +4844,37 @@ async function primeDatabaseStartupState() {
 }
 
 await primeDatabaseStartupState();
+
+// --- Migration: add tiene_impuesto / valor_impuesto to dim_tipo_documento ---
+try {
+  const colCheck = await query(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'dim_tipo_documento' AND column_name = 'tiene_impuesto'
+  `);
+  if (colCheck.rows.length === 0) {
+    console.log('[migration] Adding tiene_impuesto / valor_impuesto columns to dim_tipo_documento...');
+    await query(`ALTER TABLE dim_tipo_documento ADD COLUMN tiene_impuesto boolean NOT NULL DEFAULT false`);
+    await query(`ALTER TABLE dim_tipo_documento ADD COLUMN valor_impuesto numeric`);
+
+    // Populate from descripcion text (e.g. "Aplica impuesto: si. Valor impuesto: 0.19")
+    const rows = await query(`SELECT id, descripcion FROM dim_tipo_documento WHERE descripcion IS NOT NULL`);
+    for (const row of rows.rows) {
+      const desc = (row.descripcion || '').toLowerCase();
+      const aplicaMatch = desc.match(/aplica\s*impuesto\s*:\s*(si|sí|yes|true)/i);
+      const valorMatch = desc.match(/valor\s*impuesto\s*:\s*([\d.]+)/i);
+      if (aplicaMatch) {
+        const valor = valorMatch ? parseFloat(valorMatch[1]) : null;
+        await query(
+          `UPDATE dim_tipo_documento SET tiene_impuesto = true, valor_impuesto = $1 WHERE id = $2`,
+          [valor, row.id],
+        );
+      }
+    }
+    console.log('[migration] dim_tipo_documento tax columns added and populated.');
+  }
+} catch (migrationError) {
+  console.error('[migration] Failed to add tax columns:', migrationError);
+}
 
 try {
   await registerFrontend();

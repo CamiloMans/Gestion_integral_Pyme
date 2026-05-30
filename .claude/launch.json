@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Rekosol - Gestion Gastos",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3002,
+      "cwd": "C:\\Users\\Camilo Mansilla\\Desktop\\Proyectos\\Rekosol - Gestion Gastos - Copy"
+    },
+    {
+      "name": "Myma Web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "cwd": "c:\\Users\\Camilo Mansilla\\Desktop\\Myma\\Aplicaciones Myma\\apps\\web"
+    },
+    {
+      "name": "NotebookLM API",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "notebooklm_api:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
+      "port": 8001,
+      "cwd": "c:\\Users\\Camilo Mansilla\\Desktop\\Myma\\NotebookLM"
+    },
+    {
+      "name": "NotebookLM UI",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "notebooklm_ui.py"],
+      "port": 8501,
+      "cwd": "c:\\Users\\Camilo Mansilla\\Desktop\\Myma\\NotebookLM"
+    }
+  ]
+}
