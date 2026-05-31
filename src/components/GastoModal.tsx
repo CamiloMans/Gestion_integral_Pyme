@@ -16,6 +16,12 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { DocumentoViewer } from './DocumentoViewer';
 import { toast } from '@/hooks/use-toast';
 import { postgresApi, type GastoDocumentExtractionResult } from '@/services/postgresApi';
+import {
+  isExtractableDocument,
+  normalizeLookupText,
+  resolveEmpresaId as resolveExtractedEmpresaId,
+  resolveTipoDocumentoId as resolveExtractedTipoDocumentoId,
+} from '@/lib/gasto-document';
 
 type CategoriaOption = {
   id: string;
@@ -34,32 +40,6 @@ type TipoDocumentoOption = {
 };
 
 type GastoAdjunto = NonNullable<Gasto['archivosAdjuntos']>[number];
-
-function normalizeLookupText(value?: string | null) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-function normalizeRut(value?: string | null) {
-  return String(value || '').replace(/[^0-9kK]/g, '').toUpperCase();
-}
-
-function isExtractableDocument(file: File) {
-  const mimeType = file.type.toLowerCase();
-  const fileName = file.name.toLowerCase();
-
-  return (
-    mimeType.startsWith('image/') ||
-    mimeType === 'application/pdf' ||
-    mimeType === 'application/xml' ||
-    mimeType === 'text/xml' ||
-    /\.(jpe?g|png|webp|pdf|xml)$/i.test(fileName)
-  );
-}
 
 interface GastoModalProps {
   open: boolean;
@@ -399,39 +379,11 @@ export function GastoModal({
   };
 
   const resolveTipoDocumentoId = useCallback((extractedType?: string | null) => {
-    const normalizedType = normalizeLookupText(extractedType);
-    if (!normalizedType) return '';
-
-    return tiposDocumentoOrdenados.find((item) => normalizeLookupText(item.nombre) === normalizedType)?.id || '';
+    return resolveExtractedTipoDocumentoId(tiposDocumentoOrdenados, extractedType);
   }, [tiposDocumentoOrdenados]);
 
   const resolveEmpresaId = useCallback((extracted: GastoDocumentExtractionResult) => {
-    const candidateRuts = [
-      extracted.empresaRut,
-      extracted.emisorRut,
-    ].map(normalizeRut).filter((rut): rut is string => Boolean(rut));
-    const rutMatch = todasLasEmpresas.find((empresa) => {
-      const empresaRut = normalizeRut(empresa.rut);
-      return empresaRut && candidateRuts.includes(empresaRut);
-    });
-
-    if (rutMatch) {
-      return rutMatch.id;
-    }
-
-    const candidateNames = [
-      extracted.empresaNombre,
-      extracted.emisorNombre,
-    ].map(normalizeLookupText).filter((name): name is string => Boolean(name));
-
-    return todasLasEmpresas.find((empresa) => {
-      const empresaName = normalizeLookupText(empresa.razonSocial);
-      return candidateNames.some((candidateName) =>
-        empresaName === candidateName ||
-        empresaName.includes(candidateName) ||
-        candidateName.includes(empresaName)
-      );
-    })?.id || '';
+    return resolveExtractedEmpresaId(todasLasEmpresas, extracted);
   }, [todasLasEmpresas]);
 
   const applyExtractedDocumentData = useCallback((extracted: GastoDocumentExtractionResult) => {

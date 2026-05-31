@@ -2,17 +2,24 @@ import { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Plus } from 'lucide-react';
 
+type HeaderAction = {
+  label: string;
+  onClick: () => void;
+  icon?: ReactNode;
+  variant?: 'default' | 'outline' | 'secondary' | 'ghost';
+};
+
 interface PageHeaderProps {
   title: ReactNode;
   subtitle?: ReactNode;
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
+  action?: HeaderAction;
+  actions?: HeaderAction[];
   children?: ReactNode;
 }
 
-export function PageHeader({ title, subtitle, action, children }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, action, actions, children }: PageHeaderProps) {
+  const headerActions = actions || (action ? [{ ...action, icon: <Plus size={18} /> }] : []);
+
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 sm:mb-6">
       <div className="min-w-0 flex-1 pl-12 sm:pl-0">
@@ -23,12 +30,17 @@ export function PageHeader({ title, subtitle, action, children }: PageHeaderProp
       </div>
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-shrink-0">
         {children}
-        {action && (
-          <Button onClick={action.onClick} className="hidden sm:flex gap-2">
-            <Plus size={18} />
-            {action.label}
+        {headerActions.map((item) => (
+          <Button
+            key={item.label}
+            onClick={item.onClick}
+            variant={item.variant || 'default'}
+            className="hidden sm:flex gap-2"
+          >
+            {item.icon || <Plus size={18} />}
+            {item.label}
           </Button>
-        )}
+        ))}
       </div>
     </div>
   );

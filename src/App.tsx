@@ -7,6 +7,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppAuthGuard } from "@/components/AppAuthGuard";
 import { AppAuthProvider } from "@/hooks/useAppAuth";
 import Gastos from "./pages/Gastos";
+import GastosCargaMasiva from "./pages/GastosCargaMasiva";
 import Empresas from "./pages/Empresas";
 import Reportes from "./pages/Reportes";
 import NotFound from "./pages/NotFound";
@@ -26,6 +27,7 @@ const AppRoutes = () => {
       <Route element={<AppAuthGuard />}>
         <Route path="/" element={<Reportes />} />
         <Route path="/gastos" element={<Gastos />} />
+        <Route path="/gastos/carga-masiva" element={<GastosCargaMasiva />} />
         <Route path="/empresas" element={<Empresas />} />
         <Route path="/check-fields" element={<CheckFields />} />
         <Route path="/control-pagos/proyectos" element={<ControlPagosProyectos />} />

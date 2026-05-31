@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { CategoryBadge } from '@/components/CategoryBadge';
@@ -9,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare } from 'lucide-react';
+import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare, Plus, Upload } from 'lucide-react';
 import { DocumentoViewer } from '@/components/DocumentoViewer';
 import { DetalleGastoDialog } from '@/components/DetalleGastoDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -43,6 +44,7 @@ function sortByRazonSocial<T extends { razonSocial: string }>(items: T[]) {
 }
 
 export default function Gastos() {
+  const navigate = useNavigate();
   const { session } = useAppAuth();
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [gastos, setGastos] = useState<Gasto[]>([]);
@@ -466,7 +468,19 @@ export default function Gastos() {
             ? 'Cargando gastos desde PostgreSQL...'
             : `${cantidadGastosTexto} gastos encontrados`
         }
-        action={{ label: 'Nuevo Gasto', onClick: () => setModalOpen(true) }}
+        actions={[
+          {
+            label: 'Carga masiva',
+            onClick: () => navigate('/gastos/carga-masiva'),
+            icon: <Upload size={18} />,
+            variant: 'outline',
+          },
+          {
+            label: 'Nuevo Gasto',
+            onClick: () => setModalOpen(true),
+            icon: <Plus size={18} />,
+          },
+        ]}
       />
 
       <div className="bg-card rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 shadow-sm border border-border">
