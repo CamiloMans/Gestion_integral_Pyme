@@ -15,6 +15,7 @@ import { formatCurrency, type Gasto } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import {
   isExtractableDocument,
+  isOtroTipoDocumento,
   resolveEmpresaMatch,
   resolveTipoDocumentoId,
   validateGastoDraft,
@@ -332,6 +333,7 @@ export default function GastosCargaMasiva() {
     const montoTotal = parseNumericInput(row.draft.montoTotal, { allowDecimal: false });
     const montoNeto = parseNumericInput(row.draft.montoNeto, { allowDecimal: false });
     const iva = parseNumericInput(row.draft.iva, { allowDecimal: false });
+    const requiresTipoDocumentoComment = isOtroTipoDocumento(sortedTiposDocumento, row.draft.tipoDocumento);
 
     return {
       fecha: row.draft.fecha,
@@ -345,7 +347,9 @@ export default function GastosCargaMasiva() {
       iva: Number.isFinite(iva) ? iva : undefined,
       montoTotal: Number.isFinite(montoTotal) ? montoTotal : 0,
       detalle: row.draft.detalle.trim().toUpperCase() || undefined,
-      comentarioTipoDocumento: row.draft.comentarioTipoDocumento.trim().toUpperCase() || undefined,
+      comentarioTipoDocumento: requiresTipoDocumentoComment
+        ? row.draft.comentarioTipoDocumento.trim().toUpperCase() || undefined
+        : undefined,
       archivosAdjuntos: [{
         nombre: row.file.name,
         url: '',
@@ -353,7 +357,7 @@ export default function GastosCargaMasiva() {
         file: row.file,
       }],
     };
-  }, []);
+  }, [sortedTiposDocumento]);
 
   const saveValidatedRows = useCallback(async () => {
     const rowsToSave = rows.filter((row) => row.status === 'validado');
@@ -493,6 +497,7 @@ export default function GastosCargaMasiva() {
               ) : rows.map((row) => {
                 const disabled = row.status === 'guardado' || row.status === 'guardando';
                 const busy = row.status === 'extrayendo' || row.status === 'guardando';
+                const requiresTipoDocumentoComment = isOtroTipoDocumento(sortedTiposDocumento, row.draft.tipoDocumento);
 
                 return (
                   <TableRow key={row.id} className={row.status === 'guardado' ? 'bg-emerald-50/60' : ''}>
@@ -539,6 +544,15 @@ export default function GastosCargaMasiva() {
                         <option value="">Seleccionar</option>
                         {sortedTiposDocumento.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
                       </select>
+                      {requiresTipoDocumentoComment && (
+                        <Input
+                          className="mt-2"
+                          value={row.draft.comentarioTipoDocumento}
+                          disabled={disabled}
+                          placeholder="Ej: NOTA DE CREDITO, RECIBO, ETC."
+                          onChange={(e) => updateDraftField(row.id, 'comentarioTipoDocumento', e.target.value.toUpperCase())}
+                        />
+                      )}
                     </TableCell>
                     <TableCell><Input value={row.draft.numeroDocumento} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'numeroDocumento', e.target.value.toUpperCase())} /></TableCell>
                     <TableCell><Input className="text-right" inputMode="numeric" value={row.draft.montoTotal} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'montoTotal', formatNumericInput(e.target.value, { allowDecimal: false }))} /></TableCell>

@@ -39,7 +39,10 @@ const bootstrap = {
   ],
   proyectos: [{ id: 'proyecto-1', nombre: 'Proyecto Uno', createdAt: '2026-01-01' }],
   categorias: [{ id: 'categoria-1', nombre: 'Materiales' }],
-  tiposDocumento: [{ id: 'tipo-1', nombre: 'Factura', tieneImpuestos: true, valorImpuestos: 0.19 }],
+  tiposDocumento: [
+    { id: 'tipo-1', nombre: 'Factura', tieneImpuestos: true, valorImpuestos: 0.19 },
+    { id: 'tipo-otro', nombre: 'OTRO', tieneImpuestos: false, valorImpuestos: 0 },
+  ],
   colaboradores: [],
 };
 
@@ -186,6 +189,8 @@ describe('GastosCargaMasiva', () => {
     });
 
     await waitFor(() => expect(screen.getByText(/Empresa 100% por rut: SERGIO MUÑOZ AROS/)).toBeInTheDocument());
+    expect(screen.getByPlaceholderText('Ej: NOTA DE CREDITO, RECIBO, ETC.')).toBeInTheDocument();
+    expect(screen.getByText(/Especificar tipo de documento/)).toBeInTheDocument();
 
     await waitFor(() => {
       const selects = Array.from(container.querySelectorAll('select')) as HTMLSelectElement[];
