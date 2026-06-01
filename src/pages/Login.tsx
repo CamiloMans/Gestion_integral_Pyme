@@ -237,39 +237,31 @@ export default function Login() {
 
             <div className="flex justify-center">
               {googleClientConfigured ? (
-                <div className="relative h-12 w-full">
-                  <div
-                    aria-hidden="true"
-                    className={`${socialButtonClassName} pointer-events-none flex items-center ${
-                      isGoogleLoading ? 'opacity-70' : ''
-                    }`}
-                  >
-                    <span className="absolute left-4 flex items-center justify-center">
-                      <GoogleMark />
-                    </span>
-                    Continuar con Google
-                  </div>
-
-                  <div className="absolute inset-0 z-10 overflow-hidden rounded-md [opacity:0.01]">
-                    <div
-                      className="h-[38px] origin-top-left [&>div]:!w-full [&_iframe]:!w-full"
-                      style={{ transform: 'scaleY(1.2632)' }}
-                    >
-                      <GoogleLogin
-                        onError={handleGoogleError}
-                        onSuccess={(response) => {
-                          void handleGoogleSuccess(response);
-                        }}
-                        login_hint={googleLoginHint || undefined}
-                        shape="rectangular"
-                        size="large"
-                        text="continue_with"
-                        theme="outline"
-                        width="400"
-                      />
-                    </div>
-                  </div>
-
+                <div className={`relative min-h-12 w-full ${isGoogleLoading ? 'opacity-70' : ''}`}>
+                  <GoogleLogin
+                    auto_select={false}
+                    click_listener={() => {
+                      setIsGoogleLoading(true);
+                      setLocalError(null);
+                      clearError();
+                    }}
+                    containerProps={{
+                      className: 'flex min-h-12 w-full items-center justify-center [&>div]:!w-full [&_iframe]:!w-full',
+                    }}
+                    onError={handleGoogleError}
+                    onSuccess={(response) => {
+                      void handleGoogleSuccess(response);
+                    }}
+                    login_hint={googleLoginHint || undefined}
+                    shape="rectangular"
+                    size="large"
+                    text="continue_with"
+                    theme="outline"
+                    use_fedcm_for_button={false}
+                    use_fedcm_for_prompt={false}
+                    ux_mode="popup"
+                    width="400"
+                  />
                   {isGoogleLoading && (
                     <div className="absolute inset-0 z-20 flex items-center justify-center rounded-md bg-white/70">
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#5f5f5f] border-t-transparent" />

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   isExtractableDocument,
+  normalizeRut,
   resolveEmpresaId,
+  resolveEmpresaMatch,
   resolveTipoDocumentoId,
   validateGastoDraft,
 } from './gasto-document';
@@ -32,6 +34,45 @@ describe('gasto document helpers', () => {
       empresaNombre: 'SERVICIOS NORTE',
       emisorNombre: null,
     })).toBe('empresa-2');
+  });
+
+  it('resolves Chilean RUT with leading zero before verifier', () => {
+    expect(normalizeRut('028669789-5')).toBe('286697895');
+
+    const empresas = [
+      { id: 'empresa-sergio', razonSocial: 'SERGIO MUÑOZ AROS', rut: '28669789-5', createdAt: '2026-01-01' },
+    ];
+
+    const match = resolveEmpresaMatch(empresas, {
+      empresaRut: '028669789-5',
+      emisorRut: null,
+      empresaNombre: 'SERGIO HERNAN MUNOZ ARCOS',
+      emisorNombre: null,
+    });
+
+    expect(match).toMatchObject({
+      empresaId: 'empresa-sergio',
+      score: 1,
+      method: 'rut',
+    });
+  });
+
+  it('resolves company by fuzzy name and returns similarity score', () => {
+    const empresas = [
+      { id: 'empresa-sergio', razonSocial: 'SERGIO MUÑOZ AROS', rut: '', createdAt: '2026-01-01' },
+      { id: 'empresa-banco', razonSocial: 'BANCO DE CHILE', rut: '', createdAt: '2026-01-01' },
+    ];
+
+    const match = resolveEmpresaMatch(empresas, {
+      empresaRut: null,
+      emisorRut: null,
+      empresaNombre: 'SERGIO HERNAN MUNOZ ARCOS',
+      emisorNombre: 'BANCO DE CHILE',
+    });
+
+    expect(match?.empresaId).toBe('empresa-sergio');
+    expect(match?.score).toBeGreaterThan(0.8);
+    expect(match?.method).toBe('nombre');
   });
 
   it('validates required fields and Otro comment', () => {

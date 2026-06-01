@@ -259,12 +259,18 @@ export default function Gastos() {
 
   const gastoCumpleFiltros = useCallback((gasto: Gasto) => {
     const empresa = empresasData.find((item) => item.id === gasto.empresaId);
+    const proyecto = gasto.proyectoId
+      ? proyectosData.find((item) => String(item.id) === String(gasto.proyectoId))
+      : null;
     const numeroDocStr = gasto.numeroDocumento ? String(gasto.numeroDocumento) : '';
+    const searchTermLower = searchTerm.toLowerCase();
 
     const matchesSearch =
-      !!empresa?.razonSocial?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      !!empresa?.razonSocial?.toLowerCase().includes(searchTermLower) ||
+      !!proyecto?.nombre?.toLowerCase().includes(searchTermLower) ||
+      !!proyecto?.codigoProyecto?.toLowerCase().includes(searchTermLower) ||
       numeroDocStr.includes(searchTerm) ||
-      !!gasto.detalle?.toLowerCase().includes(searchTerm.toLowerCase());
+      !!gasto.detalle?.toLowerCase().includes(searchTermLower);
 
     const matchesCategoria = filterCategoria === 'all' || String(gasto.categoria) === String(filterCategoria);
     const matchesEmpresa = filterEmpresa === 'all' || String(gasto.empresaId) === String(filterEmpresa);
@@ -288,6 +294,7 @@ export default function Gastos() {
     return matchesSearch && matchesCategoria && matchesEmpresa && matchesTipoDoc && matchesColaborador && matchesProyecto && matchesMes;
   }, [
     empresasData,
+    proyectosData,
     searchTerm,
     filterCategoria,
     filterEmpresa,
@@ -334,6 +341,32 @@ export default function Gastos() {
 
     return colaborador?.nombre || 'Persona no identificada';
   }, [colaboradoresData, editingGasto, session]);
+
+  const detalleGastoContext = useMemo(() => {
+    if (!gastoSeleccionado) {
+      return null;
+    }
+
+    const empresa = empresasData.find((item) => String(item.id) === String(gastoSeleccionado.empresaId || ''));
+    const proyecto = proyectosData.find((item) => String(item.id) === String(gastoSeleccionado.proyectoId || ''));
+    const categoria = categoriasData.find((item) => String(item.id) === String(gastoSeleccionado.categoria || ''));
+    const tipoDocumento = tiposDocumentoOptions.find((item) => String(item.id) === String(gastoSeleccionado.tipoDocumento || ''));
+    const colaborador = colaboradoresData.find((item) => String(item.id) === String(gastoSeleccionado.colaboradorId || ''));
+
+    return {
+      categoriaNombre: categoria?.nombre,
+      empresaNombre: empresa?.razonSocial,
+      empresaRut: empresa?.rut,
+      proyectoNombre: proyecto?.nombre,
+      proyectoCodigo: proyecto?.codigoProyecto,
+      tipoDocumentoNombre: tipoDocumento?.nombre,
+      registradoPorNombre:
+        gastoSeleccionado.creadoPorNombre ||
+        gastoSeleccionado.colaboradorNombre ||
+        colaborador?.nombre ||
+        'Persona no identificada',
+    };
+  }, [categoriasData, colaboradoresData, empresasData, gastoSeleccionado, proyectosData, tiposDocumentoOptions]);
 
   const mesesDisponibles = useMemo(() => {
     const fechas = new Set<string>();
@@ -405,6 +438,22 @@ export default function Gastos() {
   const handleEdit = (gasto: Gasto) => {
     setEditingGasto(gasto);
     setModalOpen(true);
+  };
+
+  const handleViewGasto = (gasto: Gasto) => {
+    setGastoSeleccionado(gasto);
+    setDetalleGastoOpen(true);
+  };
+
+  const handleEditFromDetail = () => {
+    if (!gastoSeleccionado) {
+      return;
+    }
+
+    const gasto = gastoSeleccionado;
+    setDetalleGastoOpen(false);
+    setGastoSeleccionado(undefined);
+    handleEdit(gasto);
   };
 
   const handleDelete = (id: string) => {
@@ -593,6 +642,7 @@ export default function Gastos() {
             <TableHeader>
               <TableRow className="bg-muted/50">
                 <TableHead className="font-semibold">FECHA</TableHead>
+                <TableHead className="font-semibold">PROYECTO</TableHead>
                 <TableHead className="font-semibold">CATEGORIA</TableHead>
                 <TableHead className="font-semibold">EMPRESA</TableHead>
                 <TableHead className="font-semibold">DOCUMENTO</TableHead>
@@ -605,7 +655,7 @@ export default function Gastos() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8">
+                  <TableCell colSpan={9} className="text-center py-8">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                       <span className="text-muted-foreground">Conectando con PostgreSQL...</span>
@@ -614,20 +664,32 @@ export default function Gastos() {
                 </TableRow>
               ) : filteredGastos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                     {error ? 'No se pudo cargar la informacion desde PostgreSQL' : 'No se encontraron gastos'}
                   </TableCell>
                 </TableRow>
               ) : (
                 gastosPagina.map((gasto) => {
                   const empresa = empresasData.find((item) => item.id === gasto.empresaId);
-                  const colaborador = gasto.colaboradorId
-                    ? colaboradoresData.find((item) => item.id === gasto.colaboradorId)
+                  const proyecto = gasto.proyectoId
+                    ? proyectosData.find((item) => String(item.id) === String(gasto.proyectoId))
                     : null;
-                  const nombreColaborador = gasto.colaboradorNombre || colaborador?.nombre;
-
                   return (
-                    <TableRow key={gasto.id} className="animate-fade-in">
+                    <TableRow
+                      key={gasto.id}
+                      className="animate-fade-in cursor-pointer hover:bg-muted/40"
+                      tabIndex={0}
+                      onClick={() => handleViewGasto(gasto)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) {
+                          return;
+                        }
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleViewGasto(gasto);
+                        }
+                      }}
+                    >
                       <TableCell>
                         <div>
                           <p className="text-muted-foreground">{formatDate(gasto.fecha)}</p>
@@ -635,6 +697,18 @@ export default function Gastos() {
                             <p className="font-medium text-sm mt-1">{gasto.creadoPorNombre}</p>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        {proyecto ? (
+                          <div>
+                            <p className="font-medium">{proyecto.nombre}</p>
+                            {proyecto.codigoProyecto && (
+                              <p className="text-sm text-muted-foreground">{proyecto.codigoProyecto}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">Sin proyecto</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <CategoryBadge categoryId={gasto.categoria} categories={categoriasData} />
@@ -657,7 +731,8 @@ export default function Gastos() {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 text-xs gap-1"
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setDocumentoSeleccionado(archivo);
                                     setDocumentoViewerOpen(true);
                                   }}
@@ -700,16 +775,23 @@ export default function Gastos() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => {
-                                setGastoSeleccionado(gasto);
-                                setDetalleGastoOpen(true);
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewGasto(gasto);
                               }}
                               title="Ver detalle"
                             >
                               <MessageSquare size={16} className="text-blue-500" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(gasto)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEdit(gasto);
+                            }}
+                          >
                             <Pencil size={16} />
                           </Button>
                           <Button
@@ -815,6 +897,18 @@ export default function Gastos() {
           setGastoSeleccionado(undefined);
         }}
         gasto={gastoSeleccionado}
+        categoriaNombre={detalleGastoContext?.categoriaNombre}
+        empresaNombre={detalleGastoContext?.empresaNombre}
+        empresaRut={detalleGastoContext?.empresaRut}
+        proyectoNombre={detalleGastoContext?.proyectoNombre}
+        proyectoCodigo={detalleGastoContext?.proyectoCodigo}
+        tipoDocumentoNombre={detalleGastoContext?.tipoDocumentoNombre}
+        registradoPorNombre={detalleGastoContext?.registradoPorNombre}
+        onEdit={handleEditFromDetail}
+        onOpenAttachment={(archivo) => {
+          setDocumentoSeleccionado(archivo);
+          setDocumentoViewerOpen(true);
+        }}
       />
 
       <ConfirmDialog

@@ -33,7 +33,10 @@ vi.mock('@/services/postgresApi', async () => {
 
 const bootstrap = {
   tenant: { id: 'tenant-1', slug: 'rekosol', nombre: 'Rekosol' },
-  empresas: [{ id: 'empresa-1', razonSocial: 'Proveedor Uno SPA', rut: '76.123.456-7', createdAt: '2026-01-01' }],
+  empresas: [
+    { id: 'empresa-1', razonSocial: 'Proveedor Uno SPA', rut: '76.123.456-7', createdAt: '2026-01-01' },
+    { id: 'empresa-sergio', razonSocial: 'SERGIO MUÑOZ AROS', rut: '28669789-5', createdAt: '2026-01-01' },
+  ],
   proyectos: [{ id: 'proyecto-1', nombre: 'Proyecto Uno', createdAt: '2026-01-01' }],
   categorias: [{ id: 'categoria-1', nombre: 'Materiales' }],
   tiposDocumento: [{ id: 'tipo-1', nombre: 'Factura', tieneImpuestos: true, valorImpuestos: 0.19 }],
@@ -152,6 +155,41 @@ describe('GastosCargaMasiva', () => {
       tipoDocumento: 'tipo-1',
       numeroDocumento: '123',
       montoTotal: 1000,
+    });
+  });
+
+  it('uses the same company matching confidence as single upload', async () => {
+    vi.mocked(postgresApi.extractGastoDocument).mockResolvedValue({
+      fecha: '2026-05-29',
+      tipoDocumento: 'OTRO',
+      numeroDocumento: 'INT_EMP2605281617124678197520',
+      empresaNombre: 'SERGIO HERNAN MUNOZ ARCOS',
+      empresaRut: '028669789-5',
+      emisorNombre: 'BANCO DE CHILE',
+      emisorRut: null,
+      receptorNombre: 'REKOSOL INGENIERIA SPA',
+      receptorRut: '77522275-1',
+      montoNeto: null,
+      iva: null,
+      montoTotal: 801740,
+      detalle: 'Traspaso bancario a Sergio Hernan Munoz Arcos',
+      confidence: 0.95,
+      warnings: [],
+    });
+
+    const { container } = renderPage();
+    await screen.findByText('Seleccionar documentos');
+
+    const input = container.querySelector('#bulk-gasto-files') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['a'], 'ComprobanteMov.pdf', { type: 'application/pdf' })] },
+    });
+
+    await waitFor(() => expect(screen.getByText(/Empresa 100% por rut: SERGIO MUÑOZ AROS/)).toBeInTheDocument());
+
+    await waitFor(() => {
+      const selects = Array.from(container.querySelectorAll('select')) as HTMLSelectElement[];
+      expect(selects.some((select) => select.value === 'empresa-sergio')).toBe(true);
     });
   });
 });

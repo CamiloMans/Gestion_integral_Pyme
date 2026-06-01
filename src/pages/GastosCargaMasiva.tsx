@@ -15,13 +15,14 @@ import { formatCurrency, type Gasto } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import {
   isExtractableDocument,
-  resolveEmpresaId,
+  resolveEmpresaMatch,
   resolveTipoDocumentoId,
   validateGastoDraft,
 } from '@/lib/gasto-document';
 import { postgresApi, type BootstrapResponse, type GastoDocumentExtractionResult } from '@/services/postgresApi';
 
 type BulkRowStatus = 'pendiente' | 'extrayendo' | 'listo' | 'error' | 'validado' | 'guardando' | 'guardado';
+type EmpresaMatchInfo = ReturnType<typeof resolveEmpresaMatch>;
 
 type BulkGastoDraft = {
   fecha: string;
@@ -45,6 +46,7 @@ type BulkGastoRow = {
   selected: boolean;
   validationErrors: string[];
   extracted?: GastoDocumentExtractionResult;
+  empresaMatchInfo?: EmpresaMatchInfo;
   error?: string;
   savedGastoId?: string;
 };
@@ -138,13 +140,14 @@ export default function GastosCargaMasiva() {
     setRows((current) => current.map((row) => (row.id === id ? updater(row) : row)));
   }, []);
 
-  const buildDraftFromExtraction = useCallback((extracted: GastoDocumentExtractionResult): BulkGastoDraft => {
+  const buildDraftFromExtraction = useCallback((extracted: GastoDocumentExtractionResult) => {
     const tipoDocumento = resolveTipoDocumentoId(sortedTiposDocumento, extracted.tipoDocumento);
+    const empresaMatchInfo = resolveEmpresaMatch(empresas, extracted);
 
-    return {
+    const draft: BulkGastoDraft = {
       fecha: extracted.fecha && /^\d{4}-\d{2}-\d{2}$/.test(extracted.fecha) ? extracted.fecha : '',
       categoria: '',
-      empresaId: resolveEmpresaId(empresas, extracted),
+      empresaId: empresaMatchInfo?.empresaId || '',
       proyectoId: '',
       tipoDocumento,
       numeroDocumento: extracted.numeroDocumento?.replace(/\.0$/, '') || '',
@@ -154,6 +157,8 @@ export default function GastosCargaMasiva() {
       detalle: extracted.detalle?.toUpperCase() || '',
       comentarioTipoDocumento: '',
     };
+
+    return { draft, empresaMatchInfo };
   }, [empresas, sortedTiposDocumento]);
 
   const runExtractionQueue = useCallback(async (items: BulkGastoRow[]) => {
@@ -168,13 +173,14 @@ export default function GastosCargaMasiva() {
 
         try {
           const extracted = await postgresApi.extractGastoDocument(row.file);
-          const draft = buildDraftFromExtraction(extracted);
+          const { draft, empresaMatchInfo } = buildDraftFromExtraction(extracted);
           const validationErrors = validateRow(draft);
 
           setRow(row.id, (current) => ({
             ...current,
             draft,
             extracted,
+            empresaMatchInfo,
             status: validationErrors.length === 0 ? 'validado' : 'listo',
             validationErrors,
           }));
@@ -250,6 +256,7 @@ export default function GastosCargaMasiva() {
       return {
         ...row,
         draft: nextDraft,
+        empresaMatchInfo: field === 'empresaId' ? null : row.empresaMatchInfo,
         status: nextStatus,
         validationErrors,
       };
@@ -301,6 +308,7 @@ export default function GastosCargaMasiva() {
       return {
         ...row,
         draft,
+        empresaMatchInfo: bulkApply.empresaId ? null : row.empresaMatchInfo,
         validationErrors,
         status: row.status === 'validado' && validationErrors.length > 0 ? 'listo' : row.status,
       };
@@ -554,6 +562,17 @@ export default function GastosCargaMasiva() {
                             <span className="text-muted-foreground">Sin validar</span>
                           )}
                           {row.error && <p className="line-clamp-2 text-destructive">{row.error}</p>}
+                          {row.empresaMatchInfo && (
+                            <p
+                              className={
+                                row.empresaMatchInfo.score >= 0.9
+                                  ? 'line-clamp-2 text-emerald-700'
+                                  : 'line-clamp-2 text-amber-700'
+                              }
+                            >
+                              Empresa {Math.round(row.empresaMatchInfo.score * 100)}% por {row.empresaMatchInfo.method}: {row.empresaMatchInfo.matchedName}
+                            </p>
+                          )}
                           {row.extracted?.warnings?.length ? <p className="line-clamp-2 text-amber-700">{row.extracted.warnings.join(' ')}</p> : null}
                         </div>
                       </div>

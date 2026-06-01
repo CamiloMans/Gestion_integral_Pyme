@@ -234,6 +234,16 @@ export async function ensureCoreSchema() {
       create index if not exists idx_fct_gasto_tenant_proyecto
       on fct_gasto (tenant_id, proyecto_id)
     `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists created_by uuid references users(id) on delete set null
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists updated_by uuid references users(id) on delete set null
+    `);
   })().catch((error) => {
     coreSchemaPromise = null;
     throw error;
@@ -277,52 +287,106 @@ export async function ensureDevSeedData() {
       [details.tenantId, details.tenantSlug, details.tenantName],
     );
 
-    const userResult = await query(
+    const existingUserResult = await query(
       `
-        insert into users (
-          id,
-          email,
-          nombre,
-          created_at,
-          updated_at
-        )
-        values ($1, $2, $3, now(), now())
-        on conflict (id)
-        do update set
-          email = excluded.email,
-          nombre = excluded.nombre,
-          updated_at = now()
-        returning id
+        select id
+        from users
+        where email = $1
+        limit 1
       `,
-      [details.userId, details.userEmail, details.userName],
+      [details.userEmail],
     );
 
-    const resolvedUserId = userResult.rows[0]?.id || details.userId || randomUUID();
+    let resolvedUserId = existingUserResult.rows[0]?.id;
 
-    await query(
+    if (resolvedUserId) {
+      await query(
+        `
+          update users
+          set
+            nombre = $2,
+            updated_at = now()
+          where id = $1
+        `,
+        [resolvedUserId, details.userName],
+      );
+    } else {
+      const userResult = await query(
+        `
+          insert into users (
+            id,
+            email,
+            nombre,
+            created_at,
+            updated_at
+          )
+          values ($1, $2, $3, now(), now())
+          on conflict (id)
+          do update set
+            email = excluded.email,
+            nombre = excluded.nombre,
+            updated_at = now()
+          returning id
+        `,
+        [details.userId, details.userEmail, details.userName],
+      );
+
+      resolvedUserId = userResult.rows[0]?.id || details.userId || randomUUID();
+    }
+
+    const existingMembershipResult = await query(
       `
-        insert into tenant_memberships (
-          id,
-          tenant_id,
-          user_id,
-          rol,
-          estado,
-          created_at,
-          updated_at
-        )
-        values ($1, $2, $3, $4, 'activo', now(), now())
-        on conflict (tenant_id, user_id)
-        do update set
-          rol = excluded.rol,
-          estado = 'activo',
-          updated_at = now()
+        select id
+        from tenant_memberships
+        where tenant_id = $1
+          and user_id = $2
+        union
+        select id
+        from tenant_memberships
+        where id = $3
+        limit 1
       `,
-      [details.membershipId, details.tenantId, resolvedUserId, details.role],
+      [details.tenantId, resolvedUserId, details.membershipId],
     );
+
+    const resolvedMembershipId = existingMembershipResult.rows[0]?.id || details.membershipId;
+
+    if (existingMembershipResult.rows[0]) {
+      await query(
+        `
+          update tenant_memberships
+          set
+            tenant_id = $2,
+            user_id = $3,
+            rol = $4,
+            estado = 'activo',
+            updated_at = now()
+          where id = $1
+        `,
+        [resolvedMembershipId, details.tenantId, resolvedUserId, details.role],
+      );
+    } else {
+      await query(
+        `
+          insert into tenant_memberships (
+            id,
+            tenant_id,
+            user_id,
+            rol,
+            estado,
+            created_at,
+            updated_at
+          )
+          values ($1, $2, $3, $4, 'activo', now(), now())
+        `,
+        [resolvedMembershipId, details.tenantId, resolvedUserId, details.role],
+      );
+    }
 
     return {
       ...details,
       userId: resolvedUserId,
+      membershipId: resolvedMembershipId,
     };
   })().catch((error) => {
     devSeedPromise = null;

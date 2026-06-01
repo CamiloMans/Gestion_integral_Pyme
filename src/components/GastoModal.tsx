@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,7 @@ import { postgresApi, type GastoDocumentExtractionResult } from '@/services/post
 import {
   isExtractableDocument,
   normalizeLookupText,
-  resolveEmpresaId as resolveExtractedEmpresaId,
+  resolveEmpresaMatch as resolveExtractedEmpresaMatch,
   resolveTipoDocumentoId as resolveExtractedTipoDocumentoId,
 } from '@/lib/gasto-document';
 
@@ -98,23 +98,24 @@ export function GastoModal({
   const [archivoAEliminar, setArchivoAEliminar] = useState<number | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
-  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const localPreviewUrlRef = useRef<string | null>(null);
   const [isExtractingDocument, setIsExtractingDocument] = useState(false);
+  const [empresaMatchInfo, setEmpresaMatchInfo] = useState<ReturnType<typeof resolveExtractedEmpresaMatch> | null>(null);
 
   const clearLocalPreview = useCallback(() => {
-    if (localPreviewUrl) {
-      URL.revokeObjectURL(localPreviewUrl);
-      setLocalPreviewUrl(null);
+    if (localPreviewUrlRef.current) {
+      URL.revokeObjectURL(localPreviewUrlRef.current);
+      localPreviewUrlRef.current = null;
     }
     setSelectedPreviewFile(undefined);
-  }, [localPreviewUrl]);
+  }, []);
 
   const openArchivoPreview = useCallback((archivo: GastoAdjunto) => {
     clearLocalPreview();
 
     if (archivo.file instanceof File) {
       const previewUrl = URL.createObjectURL(archivo.file);
-      setLocalPreviewUrl(previewUrl);
+      localPreviewUrlRef.current = previewUrl;
       setSelectedPreviewFile({
         nombre: archivo.nombre,
         url: previewUrl,
@@ -265,6 +266,7 @@ export function GastoModal({
       setDetalle(gasto.detalle || '');
       setComentarioTipoDocumento(gasto.comentarioTipoDocumento || '');
       setArchivosAdjuntos(gasto.archivosAdjuntos ? [...gasto.archivosAdjuntos] : []);
+      setEmpresaMatchInfo(null);
     } else {
       setFecha(new Date().toISOString().split('T')[0]);
       setCategoria('');
@@ -281,16 +283,18 @@ export function GastoModal({
       setArchivosAdjuntos([]);
       setFiltroCategoriaEmpresa('all');
       setBusquedaEmpresa('');
+      setEmpresaMatchInfo(null);
     }
   }, [categoriasOrdenadas, clearLocalPreview, gasto, open]);
 
   useEffect(() => {
     return () => {
-      if (localPreviewUrl) {
-        URL.revokeObjectURL(localPreviewUrl);
+      if (localPreviewUrlRef.current) {
+        URL.revokeObjectURL(localPreviewUrlRef.current);
+        localPreviewUrlRef.current = null;
       }
     };
-  }, [localPreviewUrl]);
+  }, []);
 
   useEffect(() => {
     if (categoria) {
@@ -383,7 +387,7 @@ export function GastoModal({
   }, [tiposDocumentoOrdenados]);
 
   const resolveEmpresaId = useCallback((extracted: GastoDocumentExtractionResult) => {
-    return resolveExtractedEmpresaId(todasLasEmpresas, extracted);
+    return resolveExtractedEmpresaMatch(todasLasEmpresas, extracted);
   }, [todasLasEmpresas]);
 
   const applyExtractedDocumentData = useCallback((extracted: GastoDocumentExtractionResult) => {
@@ -400,9 +404,12 @@ export function GastoModal({
       setNumeroDocumento(extracted.numeroDocumento.replace(/\.0$/, ''));
     }
 
-    const resolvedEmpresaId = resolveEmpresaId(extracted);
-    if (resolvedEmpresaId) {
-      setEmpresaId(resolvedEmpresaId);
+    const resolvedEmpresaMatch = resolveEmpresaId(extracted);
+    if (resolvedEmpresaMatch) {
+      setEmpresaId(resolvedEmpresaMatch.empresaId);
+      setEmpresaMatchInfo(resolvedEmpresaMatch);
+    } else {
+      setEmpresaMatchInfo(null);
     }
 
     if (typeof extracted.montoTotal === 'number' && Number.isFinite(extracted.montoTotal)) {
@@ -413,10 +420,16 @@ export function GastoModal({
       setDetalle(extracted.detalle.toUpperCase());
     }
 
+    const apiConfidence = typeof extracted.confidence === 'number'
+      ? ` Confianza API: ${Math.round(extracted.confidence * 100)}%.`
+      : '';
+    const empresaConfidence = resolvedEmpresaMatch
+      ? ` Empresa: ${Math.round(resolvedEmpresaMatch.score * 100)}% por ${resolvedEmpresaMatch.method}.`
+      : ' Empresa no encontrada automaticamente.';
     const warnings = extracted.warnings?.length ? ` ${extracted.warnings.join(' ')}` : '';
     toast({
       title: 'Documento escaneado',
-      description: `Se completaron los datos detectados.${warnings}`,
+      description: `Se completaron los datos detectados.${apiConfidence}${empresaConfidence}${warnings}`,
       variant: 'success',
     });
   }, [resolveEmpresaId, resolveTipoDocumentoId]);
@@ -640,7 +653,14 @@ export function GastoModal({
                 </ToggleGroup>
               </div>
               <div className="flex gap-2">
-                <Select value={String(empresaId || '')} onValueChange={(value) => setEmpresaId(value)} required>
+                <Select
+                  value={String(empresaId || '')}
+                  onValueChange={(value) => {
+                    setEmpresaId(value);
+                    setEmpresaMatchInfo(null);
+                  }}
+                  required
+                >
                   <SelectTrigger className="flex-1 bg-card">
                     <SelectValue placeholder="Seleccionar empresa" />
                   </SelectTrigger>
@@ -687,6 +707,19 @@ export function GastoModal({
                   </Button>
                 )}
               </div>
+              {empresaMatchInfo && (
+                <div
+                  className={
+                    empresaMatchInfo.score >= 0.9
+                      ? 'text-xs text-emerald-700'
+                      : 'text-xs text-amber-700'
+                  }
+                >
+                  Coincidencia empresa: {Math.round(empresaMatchInfo.score * 100)}% por {empresaMatchInfo.method}.
+                  {' '}Detectado: {empresaMatchInfo.extractedName || empresaMatchInfo.extractedRut || 'sin dato'}.
+                  {' '}Seleccionado: {empresaMatchInfo.matchedName}.
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
