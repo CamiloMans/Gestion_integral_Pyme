@@ -76,4 +76,43 @@ describe('GastoModal', () => {
     expect(screen.getByLabelText('Monto Total (CLP) *')).toHaveValue('2.500');
     expect(screen.getByDisplayValue('SERVICIO DE COMIDAS EN RESTAURANTE')).toBeInTheDocument();
   });
+
+  it('sends the specified document type when the option name is uppercase OTRO', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <GastoModal
+        {...props}
+        onSave={onSave}
+        tiposDocumento={[{ id: 'tipo-otro', nombre: 'OTRO', tieneImpuestos: false, valorImpuestos: 0 }]}
+        gasto={{
+          id: 'gasto-1',
+          fecha: '2026-06-05',
+          categoria: 'categoria-1',
+          tipoDocumento: 'tipo-otro',
+          numeroDocumento: '0506000000000000',
+          empresaId: 'empresa-1',
+          monto: 14110,
+          montoTotal: 14110,
+          detalle: '',
+          comentarioTipoDocumento: 'TRANSFERENCIA',
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Especificar tipo de documento *')).toHaveValue('TRANSFERENCIA');
+    });
+
+    const form = screen.getByRole('button', { name: /guardar/i }).closest('form') as HTMLFormElement;
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      comentarioTipoDocumento: 'TRANSFERENCIA',
+      tipoDocumento: 'tipo-otro',
+      numeroDocumento: '0506000000000000',
+      montoTotal: 14110,
+    }));
+  });
 });

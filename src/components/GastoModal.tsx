@@ -317,9 +317,10 @@ export function GastoModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const nombreTipoDocumentoNormalizado = tipoDocumentoSeleccionado?.nombre?.trim().toLowerCase() || '';
     const esOtros =
-      tipoDocumentoSeleccionado?.nombre === 'Otros' ||
-      tipoDocumentoSeleccionado?.nombre === 'Otro';
+      nombreTipoDocumentoNormalizado === 'otros' ||
+      nombreTipoDocumentoNormalizado === 'otro';
 
     const montoTotalParsed = parseNumericInput(monto, { allowDecimal: false });
     const montoNetoParsed = parseNumericInput(montoNeto, { allowDecimal: false });
