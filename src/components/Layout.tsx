@@ -23,7 +23,7 @@ interface LayoutProps {
 }
 
 const gastosNavItems = [
-  { path: '/', label: 'Reportes', icon: BarChart3 },
+  { path: '/', label: 'Reportes', icon: BarChart3, staffOnly: true },
   { path: '/gastos', label: 'Gastos', icon: Receipt },
   { path: '/empresas', label: 'Configuracion', icon: Settings },
 ];
@@ -55,7 +55,9 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
   );
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const isAdmin = session?.role === 'admin';
+  const isSuperAdmin = session?.role === 'super_admin';
   const visibleAsistenciaNavItems = asistenciaNavItems.filter((item) => !item.adminOnly || isAdmin);
+  const visibleGastosNavItems = gastosNavItems.filter((item) => !item.staffOnly || isAdmin || isSuperAdmin);
   const SWIPE_THRESHOLD = 50;
   const EDGE_THRESHOLD = 30;
   const SWIPE_TIME_THRESHOLD = 300;
@@ -205,7 +207,7 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
 
             {gastosMenuOpen && (
               <div id="gastos-submenu" className="ml-4 space-y-1 border-l border-sidebar-border pl-3">
-                {gastosNavItems.map((item) => {
+                {visibleGastosNavItems.map((item) => {
                   const isActive = location.pathname === item.path;
                   const Icon = item.icon;
 

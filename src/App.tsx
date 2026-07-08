@@ -2,10 +2,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import type { ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppAuthGuard } from "@/components/AppAuthGuard";
-import { AppAuthProvider } from "@/hooks/useAppAuth";
+import { AppAuthProvider, useAppAuth } from "@/hooks/useAppAuth";
 import Gastos from "./pages/Gastos";
 import GastosCargaMasiva from "./pages/GastosCargaMasiva";
 import Empresas from "./pages/Empresas";
@@ -20,12 +21,22 @@ import Asistencia from "./pages/Asistencia";
 
 const queryClient = new QueryClient();
 
+const StaffRoute = ({ children }: { children: ReactNode }) => {
+  const { session } = useAppAuth();
+
+  if (session?.role !== 'super_admin' && session?.role !== 'admin') {
+    return <Navigate to="/gastos" replace />;
+  }
+
+  return <>{children}</>;
+};
+
 const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<AppAuthGuard />}>
-        <Route path="/" element={<Reportes />} />
+        <Route path="/" element={<StaffRoute><Reportes /></StaffRoute>} />
         <Route path="/gastos" element={<Gastos />} />
         <Route path="/gastos/carga-masiva" element={<GastosCargaMasiva />} />
         <Route path="/empresas" element={<Empresas />} />
