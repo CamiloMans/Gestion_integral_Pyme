@@ -1,0 +1,118 @@
+{
+  "rows": [
+    {
+      "ticker": "AMD",
+      "averageCostRaw": "US$219,57",
+      "gainPercentRaw": "132,98%",
+      "averageCost": 219.57,
+      "gainPercent": 1.3297999999999999,
+      "stopLoss": 504.96708599999994
+    },
+    {
+      "ticker": "ASML",
+      "averageCostRaw": "US$865,72",
+      "gainPercentRaw": "115,26%",
+      "averageCost": 865.72,
+      "gainPercent": 1.1526,
+      "stopLoss": 1837.5772720000002
+    },
+    {
+      "ticker": "GOOGL",
+      "averageCostRaw": "US$245,21",
+      "gainPercentRaw": "46,69%",
+      "averageCost": 245.21,
+      "gainPercent": 0.4669,
+      "stopLoss": 352.342249
+    },
+    {
+      "ticker": "IBKR",
+      "averageCostRaw": "US$63,50",
+      "gainPercentRaw": "43,00%",
+      "averageCost": 63.5,
+      "gainPercent": 0.43,
+      "stopLoss": 88.89999999999999
+    },
+    {
+      "ticker": "ARGT",
+      "averageCostRaw": "US$73,52",
+      "gainPercentRaw": "33,17%",
+      "averageCost": 73.52,
+      "gainPercent": 0.3317,
+      "stopLoss": 95.700984
+    },
+    {
+      "ticker": "QQQM",
+      "averageCostRaw": "US$254,87",
+      "gainPercentRaw": "16,53%",
+      "averageCost": 254.87,
+      "gainPercent": 0.1653,
+      "stopLoss": 289.353911
+    },
+    {
+      "ticker": "VT",
+      "averageCostRaw": "US$142,86",
+      "gainPercentRaw": "9,40%",
+      "averageCost": 142.86,
+      "gainPercent": 0.094,
+      "stopLoss": 152.00304000000003
+    },
+    {
+      "ticker": "VOO",
+      "averageCostRaw": "US$627,90",
+      "gainPercentRaw": "8,61%",
+      "averageCost": 627.9,
+      "gainPercent": 0.0861,
+      "stopLoss": 663.12519
+    },
+    {
+      "ticker": "ITDI",
+      "averageCostRaw": "US$38,78",
+      "gainPercentRaw": "7,72%",
+      "averageCost": 38.78,
+      "gainPercent": 0.07719999999999999,
+      "stopLoss": 40.610416
+    },
+    {
+      "ticker": "TSLA",
+      "averageCostRaw": "US$397,59",
+      "gainPercentRaw": "2,23%",
+      "averageCost": 397.59,
+      "gainPercent": 0.0223,
+      "stopLoss": 394.528557
+    },
+    {
+      "ticker": "GLDM",
+      "averageCostRaw": "US$82,44",
+      "gainPercentRaw": "1,07%",
+      "averageCost": 82.44,
+      "gainPercent": 0.010700000000000001,
+      "stopLoss": 80.848908
+    },
+    {
+      "ticker": "BRK.B",
+      "averageCostRaw": "US$494,79",
+      "gainPercentRaw": "-1,12%",
+      "averageCost": 494.79,
+      "gainPercent": -0.011200000000000002,
+      "stopLoss": 474.404652
+    },
+    {
+      "ticker": "NVDA",
+      "averageCostRaw": "US$217,69",
+      "gainPercentRaw": "-5,74%",
+      "averageCost": 217.69,
+      "gainPercent": -0.0574,
+      "stopLoss": 198.663894
+    },
+    {
+      "ticker": "META",
+      "averageCostRaw": "US$651,93",
+      "gainPercentRaw": "-13,03%",
+      "averageCost": 651.93,
+      "gainPercent": -0.1303,
+      "stopLoss": 547.425621
+    }
+  ],
+  "errors": [],
+  "extractedAt": "2026-06-15T00:43:52.636Z"
+}

@@ -73,10 +73,12 @@ type TipoDocumentoProyectoOption = {
   createdAt?: string;
 };
 
+type UserRole = 'member' | 'admin' | 'super_admin';
+
 type InviteUserInput = {
   email: string;
   nombre?: string;
-  role?: 'member' | 'admin';
+  role?: UserRole;
 };
 
 type ExchangeAuthTokenInput = {
@@ -371,6 +373,22 @@ export const postgresApi = {
     });
   },
 
+  updateUsuario(membershipId: string, cambios: { nombre?: string; role?: UserRole }) {
+    return request<TenantUser>(`/api/usuarios/${membershipId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nombre: cambios.nombre,
+        rol: cambios.role,
+      }),
+    });
+  },
+
+  deleteUsuario(membershipId: string) {
+    return request<TenantUser>(`/api/usuarios/${membershipId}`, {
+      method: 'DELETE',
+    });
+  },
+
   getAsistenciaDashboard(days = 30) {
     const searchParams = new URLSearchParams({ days: String(days) });
     return request<AsistenciaDashboardResponse>(`/api/asistencia/dashboard?${searchParams.toString()}`);
@@ -623,6 +641,7 @@ export type {
   TenantInfo,
   TenantMembership,
   TenantUser,
+  UserRole,
   TipoDocumentoCreateInput,
   TipoDocumentoOption,
   TipoDocumentoProyectoCreateInput,

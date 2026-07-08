@@ -33,9 +33,10 @@ export function getDevAuthBypassDetails() {
     membershipId: normalizeText(process.env.DEV_AUTH_MEMBERSHIP_ID, DEFAULT_DEV_MEMBERSHIP_ID),
     userEmail: normalizeText(process.env.DEV_AUTH_BYPASS_EMAIL, 'dev@rekosol.local').toLowerCase(),
     userName: normalizeText(process.env.DEV_AUTH_BYPASS_NAME, 'Usuario Local'),
-    role: normalizeText(process.env.DEV_AUTH_BYPASS_ROLE, 'admin').toLowerCase() === 'member'
-      ? 'member'
-      : 'admin',
+    role: (() => {
+      const normalized = normalizeText(process.env.DEV_AUTH_BYPASS_ROLE, 'admin').toLowerCase();
+      return ['member', 'admin', 'super_admin'].includes(normalized) ? normalized : 'admin';
+    })(),
   };
 }
 

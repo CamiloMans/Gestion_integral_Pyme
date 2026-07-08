@@ -100,6 +100,7 @@ export function GastoModal({
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
   const localPreviewUrlRef = useRef<string | null>(null);
   const [isExtractingDocument, setIsExtractingDocument] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [empresaMatchInfo, setEmpresaMatchInfo] = useState<ReturnType<typeof resolveExtractedEmpresaMatch> | null>(null);
 
   const clearLocalPreview = useCallback(() => {
@@ -317,6 +318,10 @@ export function GastoModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (isSaving) {
+      return;
+    }
+
     const nombreTipoDocumentoNormalizado = tipoDocumentoSeleccionado?.nombre?.trim().toLowerCase() || '';
     const esOtros =
       nombreTipoDocumentoNormalizado === 'otros' ||
@@ -348,21 +353,26 @@ export function GastoModal({
       return;
     }
 
-    await onSave({
-      fecha,
-      categoria,
-      tipoDocumento,
-      numeroDocumento: numeroDocumentoValue,
-      empresaId,
-      proyectoId: proyectoId || undefined,
-      monto: montoTotalValue,
-      montoNeto: montoNetoValue,
-      iva: ivaValue,
-      montoTotal: montoTotalValue,
-      detalle,
-      comentarioTipoDocumento: esOtros && comentarioTipoDocumento ? comentarioTipoDocumento : undefined,
-      archivosAdjuntos: archivosAdjuntos.length > 0 ? archivosAdjuntos : undefined,
-    });
+    setIsSaving(true);
+    try {
+      await onSave({
+        fecha,
+        categoria,
+        tipoDocumento,
+        numeroDocumento: numeroDocumentoValue,
+        empresaId,
+        proyectoId: proyectoId || undefined,
+        monto: montoTotalValue,
+        montoNeto: montoNetoValue,
+        iva: ivaValue,
+        montoTotal: montoTotalValue,
+        detalle,
+        comentarioTipoDocumento: esOtros && comentarioTipoDocumento ? comentarioTipoDocumento : undefined,
+        archivosAdjuntos: archivosAdjuntos.length > 0 ? archivosAdjuntos : undefined,
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleSaveProyecto = async (nuevoProyecto: Omit<Proyecto, 'id' | 'createdAt'>) => {
@@ -850,12 +860,12 @@ export function GastoModal({
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t">
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
                 Cancelar
               </Button>
-              <Button type="submit" className="gap-2">
-                <Save size={18} />
-                Guardar
+              <Button type="submit" className="gap-2" disabled={isSaving}>
+                {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                {isSaving ? 'Guardando...' : 'Guardar'}
               </Button>
             </div>
           </form>

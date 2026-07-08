@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { Search, Building2, FolderKanban, Users, Tag, FileText, Pencil, Trash2, FolderTree, UserPlus } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { useAppAuth } from '@/hooks/useAppAuth';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ColorPicker } from '@/components/ColorPicker';
 import { formatDateLong, type Colaborador, type Empresa, type Proyecto } from '@/data/mockData';
@@ -86,10 +87,16 @@ function renderInvitationBadge(invitationState: TenantUser['invitationState']) {
   );
 }
 
+function formatRoleLabel(role: TenantUser['role']) {
+  if (role === 'super_admin') return 'Super administrador';
+  if (role === 'admin') return 'Administrador';
+  return 'Miembro';
+}
+
 function renderRoleBadge(role: TenantUser['role']) {
   return (
     <span className="inline-flex items-center rounded-full bg-muted px-2 py-1 text-xs font-medium text-foreground">
-      {role === 'admin' ? 'Administrador' : 'Miembro'}
+      {formatRoleLabel(role)}
     </span>
   );
 }
@@ -101,6 +108,21 @@ function formatAuthProviders(authProviders: TenantUser['authProviders']) {
 }
 
 export default function Empresas() {
+  const { session } = useAppAuth();
+  const currentRole = session?.role ?? null;
+  const currentUserId = session?.user?.id ?? null;
+  const canManageUsers = currentRole === 'admin' || currentRole === 'super_admin';
+
+  // Un usuario es gestionable (editar/eliminar) si: soy admin/super_admin, no soy yo mismo,
+  // esta activo, y (super_admin => cualquiera; admin => solo members).
+  const canManageUser = useCallback((usuario: TenantUser) => {
+    if (!canManageUsers) return false;
+    if (usuario.id === currentUserId) return false;
+    if (usuario.estado === 'inactivo') return false;
+    if (currentRole === 'super_admin') return true;
+    return usuario.role === 'member';
+  }, [canManageUsers, currentRole, currentUserId]);
+
   const [configData, setConfigData] = useState<ConfiguracionResponse | null>(null);
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,6 +138,7 @@ export default function Empresas() {
   const [editingCategoria, setEditingCategoria] = useState<CategoriaOption | undefined>();
   const [editingTipoDocumento, setEditingTipoDocumento] = useState<TipoDocumentoOption | undefined>();
   const [editingTipoDocumentoProyecto, setEditingTipoDocumentoProyecto] = useState<TipoDocumentoProyectoOption | undefined>();
+  const [editingUsuario, setEditingUsuario] = useState<TenantUser | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -275,6 +298,7 @@ export default function Empresas() {
     setEditingCategoria(undefined);
     setEditingTipoDocumento(undefined);
     setEditingTipoDocumentoProyecto(undefined);
+    setEditingUsuario(null);
   };
 
   const closeModal = () => {
@@ -413,6 +437,29 @@ export default function Empresas() {
     }
   };
 
+  const handleSaveUsuario = async (payload: InviteUserInput) => {
+    if (editingUsuario) {
+      try {
+        await postgresApi.updateUsuario(editingUsuario.membershipId, {
+          nombre: payload.nombre,
+          role: payload.role,
+        });
+        toast({
+          title: 'Usuario actualizado',
+          description: 'Los datos del usuario se actualizaron correctamente.',
+          variant: 'success',
+        });
+        closeModal();
+        await loadData();
+      } catch (mutationError) {
+        handleMutationError('Error al actualizar al usuario', mutationError);
+      }
+      return;
+    }
+
+    await handleInviteUser(payload);
+  };
+
   const handleCategoriaColorChange = async (categoria: CategoriaOption, color: string) => {
     try {
       await postgresApi.updateCategoria(categoria.id, {
@@ -451,7 +498,8 @@ export default function Empresas() {
           await postgresApi.deleteColaborador(deleteTarget.id);
           break;
         case 'usuarios':
-          return;
+          await postgresApi.deleteUsuario(deleteTarget.id);
+          break;
         case 'categorias':
           await postgresApi.deleteCategoria(deleteTarget.id);
           break;
@@ -548,7 +596,7 @@ export default function Empresas() {
 
     if (vista === 'usuarios') {
       if (filteredUsuarios.length === 0) {
-        return <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar usuarios desde PostgreSQL' : 'No hay usuarios invitados en este tenant'}</TableCell></TableRow>;
+        return <TableRow><TableCell colSpan={canManageUsers ? 7 : 6} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar usuarios desde PostgreSQL' : 'No hay usuarios invitados en este tenant'}</TableCell></TableRow>;
       }
 
       return filteredUsuarios.map((item) => (
@@ -559,6 +607,24 @@ export default function Empresas() {
           <TableCell>{renderInvitationBadge(item.invitationState)}</TableCell>
           <TableCell>{renderStatusBadge(item.estado !== 'inactivo')}</TableCell>
           <TableCell>{formatDateLong(item.createdAt || '')}</TableCell>
+          {canManageUsers && (
+            <TableCell>
+              <div className="flex justify-center gap-1">
+                {canManageUser(item) ? (
+                  <>
+                    <Button variant="ghost" size="icon" type="button" onClick={() => { setEditingUsuario(item); setModalOpen(true); }}>
+                      <Pencil size={16} />
+                    </Button>
+                    <Button variant="ghost" size="icon" type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteRequest({ id: item.membershipId, type: 'usuarios', label: item.nombre || item.email }); }}>
+                      <Trash2 size={16} className="text-destructive" />
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted-foreground">-</span>
+                )}
+              </div>
+            </TableCell>
+          )}
         </TableRow>
       ));
     }
@@ -649,7 +715,7 @@ export default function Empresas() {
                 {vista === 'empresas' && (<><TableHead className="font-semibold">EMPRESA</TableHead><TableHead className="font-semibold">RUT</TableHead><TableHead className="font-semibold">CONTACTO</TableHead><TableHead className="font-semibold">CREADA</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'proyectos' && (<><TableHead className="font-semibold">PROYECTO</TableHead><TableHead className="font-semibold">MONEDA</TableHead><TableHead className="font-semibold">MONTO TOTAL</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'colaboradores' && (<><TableHead className="font-semibold">COLABORADOR</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">TELEFONO</TableHead><TableHead className="font-semibold">CARGO</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
-                {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead></>)}
+                {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead>{canManageUsers && <TableHead className="text-center font-semibold">ACCIONES</TableHead>}</>)}
                 {vista === 'categorias' && (<><TableHead className="font-semibold">CATEGORIA</TableHead><TableHead className="font-semibold">COLOR</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumento' && (<><TableHead className="font-semibold">TIPO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">TIENE IMPUESTOS</TableHead><TableHead className="font-semibold">VALOR IMPUESTOS</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumentoProyecto' && (<><TableHead className="font-semibold">DOCUMENTO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
@@ -663,7 +729,7 @@ export default function Empresas() {
       {vista === 'empresas' && <EmpresaModal open={modalOpen} onClose={closeModal} onSave={handleSaveEmpresa} empresa={editingEmpresa} />}
       {vista === 'proyectos' && <ProyectoModal open={modalOpen} onClose={closeModal} onSave={handleSaveProyecto} proyecto={editingProyecto} />}
       {vista === 'colaboradores' && <ColaboradorModal open={modalOpen} onClose={closeModal} onSave={handleSaveColaborador} colaborador={editingColaborador} />}
-      {vista === 'usuarios' && <UserInviteModal open={modalOpen} onClose={closeModal} onSave={handleInviteUser} />}
+      {vista === 'usuarios' && <UserInviteModal open={modalOpen} onClose={closeModal} onSave={handleSaveUsuario} editingUser={editingUsuario} />}
       {vista === 'categorias' && <CategoriaModal open={modalOpen} onClose={closeModal} onSave={handleSaveCategoria} categoria={editingCategoria ? { id: editingCategoria.id, nombre: editingCategoria.nombre } : undefined} />}
       {vista === 'tiposDocumento' && <TipoDocumentoModal open={modalOpen} onClose={closeModal} onSave={handleSaveTipoDocumento} tipoDocumento={editingTipoDocumento} />}
       {vista === 'tiposDocumentoProyecto' && <TipoDocumentoProyectoModal open={modalOpen} onClose={closeModal} onSave={handleSaveTipoDocumentoProyecto} tipoDocumentoProyecto={editingTipoDocumentoProyecto} />}

@@ -269,7 +269,12 @@ const sessionTenantInputSchema = z.object({
 const inviteUserInputSchema = z.object({
   email: z.string().trim().email(),
   nombre: z.string().optional().nullable().or(z.literal('')),
-  rol: z.enum(['member', 'admin']).optional().default('member'),
+  rol: z.enum(['member', 'admin', 'super_admin']).optional().default('member'),
+});
+
+const updateUserInputSchema = z.object({
+  nombre: z.string().optional().nullable().or(z.literal('')),
+  rol: z.enum(['member', 'admin', 'super_admin']).optional(),
 });
 
 const asistenciaDashboardQuerySchema = z.object({
@@ -2716,6 +2721,28 @@ function attachAuthToRequest(req, authSession) {
   });
 }
 
+function normalizeRole(role) {
+  return String(role || '').trim().toLowerCase();
+}
+
+// Determina si `actorRole` puede eliminar (desactivar) una membresia con `targetRole`.
+// super_admin puede a cualquiera; admin solo a members. La prohibicion de auto-borrado
+// se valida aparte comparando user ids.
+function canDeleteMembershipRole(actorRole, targetRole) {
+  const actor = normalizeRole(actorRole);
+  const target = normalizeRole(targetRole);
+
+  if (actor === 'super_admin') {
+    return true;
+  }
+
+  if (actor === 'admin') {
+    return target === 'member';
+  }
+
+  return false;
+}
+
 app.use((req, _res, next) => {
   runWithRequestContext(
     {
@@ -2955,6 +2982,10 @@ app.post('/api/usuarios', async (req, res) => {
     const nombre = normalizeNullableText(payload.nombre);
     const rol = normalizeText(payload.rol, { lowercase: true }) || 'member';
 
+    if (rol === 'super_admin' && normalizeRole(req.auth?.role) !== 'super_admin') {
+      throw createAuthError('Solo un super administrador puede asignar el rol super_admin.', 403);
+    }
+
     await client.query('begin');
 
     const existingUserResult = await client.query(
@@ -3039,6 +3070,149 @@ app.post('/api/usuarios', async (req, res) => {
     sendErrorResponse(res, error, 'No se pudo invitar al usuario.');
   } finally {
     client.release();
+  }
+});
+
+app.delete('/api/usuarios/:id', async (req, res) => {
+  try {
+    if (!req.auth?.user?.id) {
+      throw createAuthError('No hay una sesion activa.', 401);
+    }
+
+    const tenant = await getTenant();
+    const membershipId = req.params.id;
+
+    const membershipResult = await query(
+      `
+        select id, user_id, rol, estado
+        from tenant_memberships
+        where tenant_id = $1
+          and id = $2
+        limit 1
+      `,
+      [tenant.id, membershipId],
+    );
+
+    const membership = membershipResult.rows[0];
+
+    if (!membership) {
+      return res.status(404).json({ error: 'Usuario no encontrado en este tenant.' });
+    }
+
+    if (membership.user_id === req.auth.user.id) {
+      throw createAuthError('No puedes eliminar tu propio usuario.', 403);
+    }
+
+    if (!canDeleteMembershipRole(req.auth.role, membership.rol)) {
+      throw createAuthError('No tienes permisos para eliminar a este usuario.', 403);
+    }
+
+    await query(
+      `
+        update tenant_memberships
+        set estado = 'inactivo',
+            updated_at = now()
+        where tenant_id = $1
+          and id = $2
+      `,
+      [tenant.id, membershipId],
+    );
+
+    const updatedUser = await fetchTenantUserByUserId(tenant.id, membership.user_id);
+
+    res.json(updatedUser);
+  } catch (error) {
+    sendErrorResponse(res, error, 'No se pudo eliminar al usuario.');
+  }
+});
+
+app.put('/api/usuarios/:id', async (req, res) => {
+  try {
+    if (!req.auth?.user?.id) {
+      throw createAuthError('No hay una sesion activa.', 401);
+    }
+
+    const tenant = await getTenant();
+    const membershipId = req.params.id;
+    const payload = updateUserInputSchema.parse(req.body);
+    const nombre = normalizeNullableText(payload.nombre);
+    const nuevoRol = payload.rol ? normalizeRole(payload.rol) : null;
+
+    const membershipResult = await query(
+      `
+        select id, user_id, rol, estado
+        from tenant_memberships
+        where tenant_id = $1
+          and id = $2
+        limit 1
+      `,
+      [tenant.id, membershipId],
+    );
+
+    const membership = membershipResult.rows[0];
+
+    if (!membership) {
+      return res.status(404).json({ error: 'Usuario no encontrado en este tenant.' });
+    }
+
+    if (membership.user_id === req.auth.user.id) {
+      throw createAuthError('No puedes editar tu propio usuario.', 403);
+    }
+
+    // El actor debe poder gestionar al usuario segun su rol actual.
+    if (!canDeleteMembershipRole(req.auth.role, membership.rol)) {
+      throw createAuthError('No tienes permisos para editar a este usuario.', 403);
+    }
+
+    if (nuevoRol) {
+      const actorRole = normalizeRole(req.auth.role);
+
+      if (nuevoRol === 'super_admin' && actorRole !== 'super_admin') {
+        throw createAuthError('Solo un super administrador puede asignar el rol super_admin.', 403);
+      }
+
+      if (actorRole === 'admin' && nuevoRol !== 'member') {
+        throw createAuthError('Un administrador solo puede asignar el rol de miembro.', 403);
+      }
+    }
+
+    if (nombre) {
+      await query(
+        `
+          update users
+          set nombre = $2,
+              updated_at = now()
+          where id = $1
+        `,
+        [membership.user_id, nombre],
+      );
+    }
+
+    if (nuevoRol) {
+      await query(
+        `
+          update tenant_memberships
+          set rol = $3,
+              updated_at = now()
+          where tenant_id = $1
+            and id = $2
+        `,
+        [tenant.id, membershipId, nuevoRol],
+      );
+    }
+
+    const updatedUser = await fetchTenantUserByUserId(tenant.id, membership.user_id);
+
+    res.json(updatedUser);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Payload invalido',
+        details: error.flatten(),
+      });
+    }
+
+    sendErrorResponse(res, error, 'No se pudo actualizar al usuario.');
   }
 });
 
