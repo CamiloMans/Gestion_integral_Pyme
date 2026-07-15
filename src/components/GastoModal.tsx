@@ -100,6 +100,7 @@ export function GastoModal({
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
   const localPreviewUrlRef = useRef<string | null>(null);
   const [isExtractingDocument, setIsExtractingDocument] = useState(false);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [empresaMatchInfo, setEmpresaMatchInfo] = useState<ReturnType<typeof resolveExtractedEmpresaMatch> | null>(null);
 
@@ -445,8 +446,11 @@ export function GastoModal({
     });
   }, [resolveEmpresaId, resolveTipoDocumentoId]);
 
-  const handleAttachmentInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
+  const processAttachmentFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
+
     const nuevosArchivos = files.map((archivo) => ({
       nombre: archivo.name,
       url: '',
@@ -455,7 +459,6 @@ export function GastoModal({
     }));
 
     setArchivosAdjuntos((prev) => [...prev, ...nuevosArchivos]);
-    event.target.value = '';
 
     const fileToExtract = files.find(isExtractableDocument);
     if (!fileToExtract) {
@@ -477,6 +480,30 @@ export function GastoModal({
       setIsExtractingDocument(false);
     }
   }, [applyExtractedDocumentData]);
+
+  const handleAttachmentInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    void processAttachmentFiles(files);
+  }, [processAttachmentFiles]);
+
+  const handleAttachmentDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDraggingFiles(false);
+    if (isExtractingDocument) return;
+    const files = Array.from(event.dataTransfer?.files || []);
+    void processAttachmentFiles(files);
+  }, [processAttachmentFiles, isExtractingDocument]);
+
+  const handleAttachmentDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!isExtractingDocument) setIsDraggingFiles(true);
+  }, [isExtractingDocument]);
+
+  const handleAttachmentDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDraggingFiles(false);
+  }, []);
 
   const montoValue = parseNumericInput(monto, { allowDecimal: false });
   const montoNetoValue = parseNumericInput(montoNeto, { allowDecimal: false });
@@ -768,6 +795,28 @@ export function GastoModal({
                     <Paperclip size={18} />
                   )}
                 </Button>
+              </div>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => document.getElementById('archivosAdjuntos')?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    document.getElementById('archivosAdjuntos')?.click();
+                  }
+                }}
+                onDrop={handleAttachmentDrop}
+                onDragOver={handleAttachmentDragOver}
+                onDragLeave={handleAttachmentDragLeave}
+                className={`mt-2 flex items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-center transition-colors cursor-pointer ${
+                  isDraggingFiles
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border bg-muted/20 text-muted-foreground hover:border-primary/60 hover:bg-muted/40'
+                } ${isExtractingDocument ? 'pointer-events-none opacity-50' : ''}`}
+              >
+                <Paperclip size={14} />
+                <span>Arrastra imagenes o documentos aqui</span>
               </div>
               {aplicaImpuesto && (
                 <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">

@@ -64,7 +64,7 @@ export default function Gastos() {
   const [filterCategoria, setFilterCategoria] = useState('all');
   const [filterEmpresa, setFilterEmpresa] = useState('all');
   const [filterTipoDoc, setFilterTipoDoc] = useState('all');
-  const [filterColaborador, setFilterColaborador] = useState('all');
+  const [filterUsuario, setFilterUsuario] = useState('all');
   const [filterProyecto, setFilterProyecto] = useState('all');
   const [filterMes, setFilterMes] = useState('all');
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
@@ -259,6 +259,21 @@ export default function Gastos() {
     );
   }, [colaboradoresData]);
 
+  // Usuarios (creadores) distintos presentes en los gastos, para el filtro por usuario.
+  const usuariosDisponibles = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const gasto of gastos) {
+      const id = (gasto.creadoPor || '').trim();
+      if (!id) continue;
+      if (!map.has(id)) {
+        map.set(id, (gasto.creadoPorNombre || '').trim() || 'Usuario sin nombre');
+      }
+    }
+    return Array.from(map.entries())
+      .map(([id, nombre]) => ({ id, nombre }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+  }, [gastos]);
+
   const proyectosOrdenados = useMemo(() => {
     return sortByNombre(proyectosData);
   }, [proyectosData]);
@@ -281,7 +296,7 @@ export default function Gastos() {
     const matchesCategoria = filterCategoria === 'all' || String(gasto.categoria) === String(filterCategoria);
     const matchesEmpresa = filterEmpresa === 'all' || String(gasto.empresaId) === String(filterEmpresa);
     const matchesTipoDoc = filterTipoDoc === 'all' || String(gasto.tipoDocumento) === String(filterTipoDoc);
-    const matchesColaborador = filterColaborador === 'all' || String(gasto.colaboradorId || '') === String(filterColaborador);
+    const matchesColaborador = filterUsuario === 'all' || String(gasto.creadoPor || '') === String(filterUsuario);
     const matchesProyecto = filterProyecto === 'all' || String(gasto.proyectoId || '') === String(filterProyecto);
 
     let matchesMes = true;
@@ -305,7 +320,7 @@ export default function Gastos() {
     filterCategoria,
     filterEmpresa,
     filterTipoDoc,
-    filterColaborador,
+    filterUsuario,
     filterProyecto,
     filterMes,
   ]);
@@ -316,7 +331,7 @@ export default function Gastos() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterCategoria, filterEmpresa, filterTipoDoc, filterColaborador, filterProyecto, filterMes]);
+  }, [searchTerm, filterCategoria, filterEmpresa, filterTipoDoc, filterUsuario, filterProyecto, filterMes]);
 
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageEnd = pageStart + PAGE_SIZE;
@@ -613,15 +628,15 @@ export default function Gastos() {
               </SelectContent>
             </Select>
 
-            <Select value={filterColaborador} onValueChange={setFilterColaborador}>
+            <Select value={filterUsuario} onValueChange={setFilterUsuario}>
               <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todos los colaboradores" />
+                <SelectValue placeholder="Todos los usuarios" />
               </SelectTrigger>
               <SelectContent className="bg-card">
-                <SelectItem value="all">Todos los colaboradores</SelectItem>
-                {colaboradoresOrdenados.map((colaborador) => (
-                  <SelectItem key={colaborador.id} value={colaborador.id}>
-                    {colaborador.nombre}
+                <SelectItem value="all">Todos los usuarios</SelectItem>
+                {usuariosDisponibles.map((usuario) => (
+                  <SelectItem key={usuario.id} value={usuario.id}>
+                    {usuario.nombre}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -647,7 +662,7 @@ export default function Gastos() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold">FECHA</TableHead>
+                <TableHead className="font-semibold">CREADO</TableHead>
                 <TableHead className="font-semibold">PROYECTO</TableHead>
                 <TableHead className="font-semibold">CATEGORIA</TableHead>
                 <TableHead className="font-semibold">EMPRESA</TableHead>
@@ -656,12 +671,13 @@ export default function Gastos() {
                 <TableHead className="font-semibold text-right">IVA</TableHead>
                 <TableHead className="font-semibold text-right">MONTO TOTAL</TableHead>
                 <TableHead className="font-semibold text-center">ACCIONES</TableHead>
+                <TableHead className="font-semibold">FECHA</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8">
+                  <TableCell colSpan={10} className="text-center py-8">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                       <span className="text-muted-foreground">Conectando con PostgreSQL...</span>
@@ -670,7 +686,7 @@ export default function Gastos() {
                 </TableRow>
               ) : filteredGastos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                     {error ? 'No se pudo cargar la informacion desde PostgreSQL' : 'No se encontraron gastos'}
                   </TableCell>
                 </TableRow>
@@ -698,9 +714,9 @@ export default function Gastos() {
                     >
                       <TableCell>
                         <div>
-                          <p className="text-muted-foreground">{formatDate(gasto.fecha)}</p>
-                          {gasto.creadoPorNombre && (
-                            <p className="font-medium text-sm mt-1">{gasto.creadoPorNombre}</p>
+                          <p className="font-medium text-sm">{gasto.creadoPorNombre || 'Sin usuario'}</p>
+                          {gasto.createdAt && (
+                            <p className="text-xs text-muted-foreground mt-1">{formatDate(gasto.createdAt)}</p>
                           )}
                         </div>
                       </TableCell>
@@ -813,6 +829,9 @@ export default function Gastos() {
                             <Trash2 size={16} className="text-destructive" />
                           </Button>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-muted-foreground">{formatDate(gasto.fecha)}</p>
                       </TableCell>
                     </TableRow>
                   );

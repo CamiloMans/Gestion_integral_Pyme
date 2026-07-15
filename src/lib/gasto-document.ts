@@ -7,6 +7,7 @@ type GastoDraftValidationInput = {
   empresaId?: string | null;
   tipoDocumento?: string | null;
   numeroDocumento?: string | null;
+  proyectoId?: string | null;
   montoTotal?: number | string | null;
   comentarioTipoDocumento?: string | null;
 };
@@ -198,7 +199,7 @@ export function validateGastoDraft(
     !String(draft.categoria || '').trim() ? 'Categoria' : null,
     !String(draft.empresaId || '').trim() ? 'Empresa' : null,
     !String(draft.tipoDocumento || '').trim() ? 'Tipo de documento' : null,
-    !String(draft.numeroDocumento || '').trim() ? 'Numero de documento' : null,
+    !String(draft.proyectoId || '').trim() ? 'Proyecto' : null,
     !Number.isFinite(montoTotal) || montoTotal <= 0 ? 'Monto total' : null,
     isOtroTipoDocumento(tiposDocumento, draft.tipoDocumento) && !String(draft.comentarioTipoDocumento || '').trim()
       ? 'Especificar tipo de documento'

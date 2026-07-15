@@ -221,7 +221,10 @@ const gastoInputSchema = z.object({
   empresaId: requiredUuid('Empresa', 'Empresa es obligatoria.'),
   categoria: requiredUuid('Categoria', 'Categoria es obligatoria.'),
   tipoDocumento: requiredUuid('Tipo de documento', 'Tipo de documento es obligatorio.'),
-  numeroDocumento: requiredTrimmedString('Numero de documento', 'Numero de documento es obligatorio.'),
+  numeroDocumento: z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() : value),
+    z.string().optional().default(''),
+  ),
   monto: z.coerce.number().optional(),
   montoNeto: z.coerce.number().optional().nullable(),
   iva: z.coerce.number().optional().nullable(),
@@ -1495,16 +1498,9 @@ async function ensureGastoDocumentosSchema() {
           check (tipo_documento_id is not null) not valid;
         end if;
 
-        if not exists (
-          select 1
-          from pg_constraint
-          where conname = 'chk_fct_gasto_numero_documento_required'
-            and conrelid = 'fct_gasto'::regclass
-        ) then
-          alter table fct_gasto
-          add constraint chk_fct_gasto_numero_documento_required
-          check (length(btrim(numero_documento)) > 0) not valid;
-        end if;
+        -- Numero de documento ya no es obligatorio: se elimina el check si existe.
+        alter table fct_gasto
+        drop constraint if exists chk_fct_gasto_numero_documento_required;
 
         if not exists (
           select 1
@@ -2261,9 +2257,6 @@ async function normalizeGastoForPersistence(tenantId, payload) {
   }
 
   const numeroDocumento = normalizeText(payload.numeroDocumento, { uppercase: true });
-  if (!numeroDocumento) {
-    throw createAuthError('Numero de documento es obligatorio.', 400);
-  }
 
   await requireDimensionForGasto({
     tenantId,

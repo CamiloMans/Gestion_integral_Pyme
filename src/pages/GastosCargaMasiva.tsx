@@ -109,6 +109,7 @@ export default function GastosCargaMasiva() {
   const [bulkApply, setBulkApply] = useState<BulkApplyDraft>({});
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
+  const [isDragging, setIsDragging] = useState(false);
   const previewUrlRef = useRef<string | null>(null);
 
   const empresas = useMemo(() => bootstrap?.empresas || [], [bootstrap]);
@@ -132,6 +133,7 @@ export default function GastosCargaMasiva() {
       empresaId: draft.empresaId,
       tipoDocumento: draft.tipoDocumento,
       numeroDocumento: draft.numeroDocumento,
+      proyectoId: draft.proyectoId,
       montoTotal: parseNumericInput(draft.montoTotal, { allowDecimal: false }),
       comentarioTipoDocumento: draft.comentarioTipoDocumento,
     }, sortedTiposDocumento);
@@ -241,6 +243,26 @@ export default function GastosCargaMasiva() {
       });
     }
   }, [runExtractionQueue]);
+
+  const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (loading) return;
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length > 0) {
+      handleFiles(files);
+    }
+  }, [handleFiles, loading]);
+
+  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!loading) setIsDragging(true);
+  }, [loading]);
+
+  const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+  }, []);
 
   const updateDraftField = useCallback((id: string, field: keyof BulkGastoDraft, value: string) => {
     setRow(id, (row) => {
@@ -609,6 +631,32 @@ export default function GastosCargaMasiva() {
             </TableBody>
           </Table>
         </div>
+      </div>
+
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => document.getElementById('bulk-gasto-files')?.click()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            document.getElementById('bulk-gasto-files')?.click();
+          }
+        }}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        className={`mt-4 sm:mt-6 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors cursor-pointer ${
+          isDragging
+            ? 'border-primary bg-primary/5'
+            : 'border-border bg-muted/30 hover:border-primary/60 hover:bg-muted/50'
+        } ${loading ? 'pointer-events-none opacity-50' : ''}`}
+      >
+        <Upload size={28} className={isDragging ? 'text-primary' : 'text-muted-foreground'} />
+        <p className="text-sm font-medium text-foreground">
+          Arrastra los documentos aqui o haz clic para seleccionarlos
+        </p>
+        <p className="text-xs text-muted-foreground">Imagenes, PDF o XML</p>
       </div>
 
       <DocumentoViewer
