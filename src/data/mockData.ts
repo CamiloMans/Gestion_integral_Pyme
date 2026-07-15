@@ -45,6 +45,11 @@ export interface Gasto {
   colaboradorId?: string;
   colaboradorNombre?: string;
   comentarioTipoDocumento?: string;
+  createdAt?: string;
+  creadoPor?: string;
+  creadoPorNombre?: string;
+  actualizadoPor?: string;
+  actualizadoPorNombre?: string;
   archivosAdjuntos?: Array<{ id?: string; nombre: string; url: string; tipo: string; file?: File }>;
 }
 

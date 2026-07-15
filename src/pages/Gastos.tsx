@@ -22,12 +22,18 @@ const PAGE_SIZE = 50;
 const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
 
 function sortGastosByFechaDesc(items: Gasto[]) {
+  const toTime = (value?: string) => {
+    const parsed = new Date(value || '').getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
   return [...items].sort((a, b) => {
-    const fechaA = new Date(a.fecha || '').getTime();
-    const fechaB = new Date(b.fecha || '').getTime();
-    const safeA = Number.isNaN(fechaA) ? 0 : fechaA;
-    const safeB = Number.isNaN(fechaB) ? 0 : fechaB;
-    return safeB - safeA;
+    // Prioriza fecha de creacion (recien cargados arriba); fecha del documento como desempate.
+    const creadoDiff = toTime(b.createdAt) - toTime(a.createdAt);
+    if (creadoDiff !== 0) {
+      return creadoDiff;
+    }
+    return toTime(b.fecha) - toTime(a.fecha);
   });
 }
 

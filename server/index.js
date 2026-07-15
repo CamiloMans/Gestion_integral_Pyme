@@ -1118,6 +1118,7 @@ function mapGasto(row) {
     colaboradorId: row.colaborador_id || undefined,
     colaboradorNombre: row.colaborador_nombre || undefined,
     comentarioTipoDocumento: row.comentario_tipo_documento || undefined,
+    createdAt: row.created_at || undefined,
     creadoPor: row.created_by || undefined,
     creadoPorNombre: row.created_by_nombre || undefined,
     actualizadoPor: row.updated_by || undefined,
@@ -2158,7 +2159,7 @@ async function fetchGastos(tenantId) {
        and d.id = gd.documento_id
       where g.tenant_id = $1
       group by g.id, c.nombre, uc.nombre, uu.nombre
-      order by g.fecha desc, g.created_at desc
+      order by g.created_at desc, g.fecha desc
     `,
     [tenantId],
   );
