@@ -181,9 +181,9 @@ export default function ControlPagosProyectos() {
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead>PROYECTO</TableHead>
-              <TableHead>CODIGO</TableHead>
               <TableHead>MONTO TOTAL PROY</TableHead>
               <TableHead>MONEDA BASE</TableHead>
+              <TableHead>MONTO TOTAL CLP</TableHead>
               <TableHead className="text-center">DOCUMENTOS</TableHead>
               <TableHead className="text-center">ACCIONES</TableHead>
             </TableRow>
@@ -192,9 +192,9 @@ export default function ControlPagosProyectos() {
             {filtered.map((item) => (
               <TableRow key={item.id}>
                 <TableCell>{item.nombre}</TableCell>
-                <TableCell>{item.codigoProyecto || "-"}</TableCell>
                 <TableCell>{formatAmount(item.montoTotalProyecto, item.monedaBase || "CLP")}</TableCell>
                 <TableCell>{item.monedaBase || "-"}</TableCell>
+                <TableCell>{formatAmount(item.montoTotalClp, "CLP")}</TableCell>
                 <TableCell>
                   <div className="flex justify-center gap-1">
                     <Button variant="ghost" size="icon" onClick={() => openDocumentosModal(item, "view")}>
