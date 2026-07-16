@@ -528,7 +528,7 @@ export default function ControlPagosHitos() {
       {projectSummary && (
         <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Monto total proyectado</p>
+            <p className="text-xs font-medium uppercase text-muted-foreground">Monto total CLP</p>
             <p className="mt-1 text-xl font-bold text-foreground">
               {formatAmount(projectSummary.totalProyectado, projectSummary.moneda)}
             </p>
