@@ -999,10 +999,37 @@ function mapProyecto(row) {
     nombre: row.nombre,
     codigoProyecto: row.codigo_proyecto || undefined,
     montoTotalProyecto: normalizeNumeric(row.monto_total_proyecto) ?? undefined,
+    montoTotalClp: normalizeNumeric(row.monto_total_clp) ?? undefined,
     monedaBase: row.moneda_base || undefined,
     activo: getRowActiveValue(row),
     createdAt: row.created_at,
   };
+}
+
+// Regla de negocio: si el proyecto no tiene monto total (0 o vacio), no lleva moneda base.
+function resolveProyectoMonedaBase(montoNumeric, monedaBase) {
+  if (montoNumeric === null || montoNumeric <= 0) {
+    return null;
+  }
+
+  return normalizeNullableText(monedaBase, { uppercase: true });
+}
+
+// Factor fijo UF -> CLP (por ahora constante; se puede sobrescribir con env).
+const UF_TO_CLP_RATE = Number(process.env.UF_TO_CLP_RATE || 40000);
+
+// Monto total del proyecto expresado en CLP. Los pagos siempre son en CLP.
+function resolveProyectoMontoTotalClp(montoNumeric, monedaBase) {
+  if (montoNumeric === null || montoNumeric <= 0) {
+    return null;
+  }
+
+  if (monedaBase === 'UF') {
+    return Math.round(montoNumeric * UF_TO_CLP_RATE);
+  }
+
+  // CLP (y otras monedas sin factor definido) se guardan con su valor nominal.
+  return Math.round(montoNumeric);
 }
 
 function mapCategoria(row) {
@@ -3215,6 +3242,9 @@ app.post('/api/proyectos', async (req, res) => {
     const tenant = await getTenant();
     const payload = proyectoInputSchema.parse(req.body);
     const activeColumn = await getActiveColumnName('dim_proyecto');
+    const montoNumeric = normalizeNumeric(payload.montoTotalProyecto);
+    const monedaEfectiva = resolveProyectoMonedaBase(montoNumeric, payload.monedaBase);
+    const montoTotalClp = resolveProyectoMontoTotalClp(montoNumeric, monedaEfectiva);
     const columns = [
       'id',
       'tenant_id',
@@ -3222,14 +3252,16 @@ app.post('/api/proyectos', async (req, res) => {
       'codigo_proyecto',
       'monto_total_proyecto',
       'moneda_base',
+      'monto_total_clp',
     ];
     const values = [
       randomUUID(),
       tenant.id,
       normalizeText(payload.nombre, { uppercase: true }),
       normalizeNullableText(payload.codigoProyecto, { uppercase: true }),
-      normalizeNumeric(payload.montoTotalProyecto),
-      normalizeNullableText(payload.monedaBase, { uppercase: true }),
+      montoNumeric,
+      monedaEfectiva,
+      montoTotalClp,
     ];
 
     if (activeColumn) {
@@ -3270,18 +3302,22 @@ app.put('/api/proyectos/:id', async (req, res) => {
       activo: z.boolean().optional().nullable(),
     }).parse(req.body);
     const activeColumn = await getActiveColumnName('dim_proyecto');
+    const montoNumeric = normalizeNumeric(payload.montoTotalProyecto);
+    const monedaEfectiva = resolveProyectoMonedaBase(montoNumeric, payload.monedaBase);
+    const montoTotalClp = resolveProyectoMontoTotalClp(montoNumeric, monedaEfectiva);
     const values = [
       tenant.id,
       req.params.id,
       normalizeText(payload.nombre, { uppercase: true }),
       normalizeNullableText(payload.codigoProyecto, { uppercase: true }),
-      normalizeNumeric(payload.montoTotalProyecto),
-      normalizeNullableText(payload.monedaBase, { uppercase: true }),
+      montoNumeric,
+      monedaEfectiva,
+      montoTotalClp,
     ];
 
     let activeFragment = '';
     if (activeColumn) {
-      activeFragment = `,\n          ${activeColumn} = $7`;
+      activeFragment = `,\n          ${activeColumn} = $8`;
       values.push(payload.activo ?? true);
     }
 
@@ -3292,7 +3328,8 @@ app.put('/api/proyectos/:id', async (req, res) => {
           nombre = $3,
           codigo_proyecto = $4,
           monto_total_proyecto = $5,
-          moneda_base = $6${activeFragment},
+          moneda_base = $6,
+          monto_total_clp = $7${activeFragment},
           updated_at = now()
         where tenant_id = $1
           and id = $2
@@ -5042,6 +5079,29 @@ try {
   }
 } catch (migrationError) {
   console.error('[migration] Failed to add tax columns:', migrationError);
+}
+
+// --- Migration: add monto_total_clp to dim_proyecto (monto proyectado convertido a CLP) ---
+try {
+  const colCheck = await query(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'dim_proyecto' AND column_name = 'monto_total_clp'
+  `);
+  if (colCheck.rows.length === 0) {
+    console.log('[migration] Adding monto_total_clp column to dim_proyecto...');
+    await query(`ALTER TABLE dim_proyecto ADD COLUMN monto_total_clp numeric`);
+    await query(`
+      UPDATE dim_proyecto
+      SET monto_total_clp = CASE
+        WHEN monto_total_proyecto IS NULL OR monto_total_proyecto <= 0 THEN NULL
+        WHEN moneda_base = 'UF' THEN round(monto_total_proyecto * ${UF_TO_CLP_RATE})
+        ELSE round(monto_total_proyecto)
+      END
+    `);
+    console.log('[migration] dim_proyecto.monto_total_clp added and populated.');
+  }
+} catch (migrationError) {
+  console.error('[migration] Failed to add monto_total_clp column:', migrationError);
 }
 
 try {

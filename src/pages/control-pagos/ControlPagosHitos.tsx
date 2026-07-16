@@ -227,6 +227,39 @@ export default function ControlPagosHitos() {
       });
   }, [hitosPagoProyecto, projectFilter, resolveProjectName, search]);
 
+  const projectSummary = useMemo(() => {
+    if (projectFilter === "all") return null;
+
+    const project = proyectos.find((item) => String(item.id) === String(projectFilter));
+    if (!project) return null;
+
+    // Los pagos siempre son en CLP: se usa el monto total del proyecto convertido a CLP.
+    const moneda: MonedaProyecto = "CLP";
+    const totalProyectado = Number(project.montoTotalClp) || 0;
+
+    const hitos = hitosPagoProyecto.filter((item) => String(item.proyectoId) === String(projectFilter));
+
+    let pagado = 0;
+    let facturadoNoPagado = 0;
+    for (const hito of hitos) {
+      const monto = Number(hito.montoHito) || 0;
+      if (hito.pagado) {
+        pagado += monto;
+      } else if (hito.facturado) {
+        facturadoNoPagado += monto;
+      }
+    }
+
+    return {
+      nombre: project.nombre,
+      moneda,
+      totalProyectado,
+      pagado,
+      facturadoNoPagado,
+      porPagar: totalProyectado - pagado,
+    };
+  }, [projectFilter, proyectos, hitosPagoProyecto]);
+
   const documentosByHito = useMemo(() => {
     const map = new Map<string, DocumentoHitoRecord[]>();
 
@@ -491,6 +524,35 @@ export default function ControlPagosHitos() {
           </SelectContent>
         </Select>
       </div>
+
+      {projectSummary && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Monto total proyectado</p>
+            <p className="mt-1 text-xl font-bold text-foreground">
+              {formatAmount(projectSummary.totalProyectado, projectSummary.moneda)}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Pagado</p>
+            <p className="mt-1 text-xl font-bold text-emerald-600">
+              {formatAmount(projectSummary.pagado, projectSummary.moneda)}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Facturado sin pagar</p>
+            <p className="mt-1 text-xl font-bold text-amber-600">
+              {formatAmount(projectSummary.facturadoNoPagado, projectSummary.moneda)}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Falta por pagar</p>
+            <p className="mt-1 text-xl font-bold text-blue-600">
+              {formatAmount(projectSummary.porPagar, projectSummary.moneda)}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
         <Table>

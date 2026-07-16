@@ -14,6 +14,7 @@ export interface Proyecto {
   nombre: string;
   codigoProyecto?: string;
   montoTotalProyecto?: number;
+  montoTotalClp?: number;
   monedaBase?: 'CLP' | 'UF' | 'USD';
   activo?: boolean;
   createdAt: string;

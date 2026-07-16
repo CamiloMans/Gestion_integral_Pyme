@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Proyecto } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
+import { toast } from '@/hooks/use-toast';
 import { Save } from 'lucide-react';
 
 interface ProyectoModalProps {
@@ -19,7 +20,7 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
   const [nombre, setNombre] = useState('');
   const [codigoProyecto, setCodigoProyecto] = useState('');
   const [montoTotalProyecto, setMontoTotalProyecto] = useState('');
-  const [monedaBase, setMonedaBase] = useState<'CLP' | 'UF' | 'USD'>('CLP');
+  const [monedaBase, setMonedaBase] = useState<'' | 'CLP' | 'UF' | 'USD'>('');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -31,18 +32,28 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
           ? formatNumericInput(String(proyecto.montoTotalProyecto), { allowDecimal: true, maxDecimals: 2 })
           : ''
       );
-      setMonedaBase(proyecto.monedaBase || 'CLP');
+      setMonedaBase(proyecto.monedaBase || '');
     } else {
       setNombre('');
       setCodigoProyecto('');
       setMontoTotalProyecto('');
-      setMonedaBase('CLP');
+      setMonedaBase('');
     }
   }, [proyecto, open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const montoTotalProyectoParsed = parseNumericInput(montoTotalProyecto, { allowDecimal: true, maxDecimals: 2 });
+    const montoIsPositive = Number.isFinite(montoTotalProyectoParsed) && montoTotalProyectoParsed > 0;
+
+    if (montoIsPositive && !monedaBase) {
+      toast({
+        title: 'Moneda base requerida',
+        description: 'Selecciona la moneda base cuando el monto total es mayor a 0.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     setIsSaving(true);
 
@@ -51,7 +62,7 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
         nombre: nombre.trim().toUpperCase(),
         codigoProyecto: codigoProyecto.trim() ? codigoProyecto.trim().toUpperCase() : undefined,
         montoTotalProyecto: Number.isFinite(montoTotalProyectoParsed) ? montoTotalProyectoParsed : undefined,
-        monedaBase,
+        monedaBase: monedaBase || undefined,
       });
       onClose();
     } catch (error) {
@@ -60,6 +71,9 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
       setIsSaving(false);
     }
   };
+
+  const montoParsedRender = parseNumericInput(montoTotalProyecto, { allowDecimal: true, maxDecimals: 2 });
+  const requiereMoneda = Number.isFinite(montoParsedRender) && montoParsedRender > 0;
 
   return (
     <Dialog
@@ -115,7 +129,7 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="monedaBase">Moneda Base *</Label>
+            <Label htmlFor="monedaBase">Moneda Base{requiereMoneda ? ' *' : ''}</Label>
             <Select value={monedaBase} onValueChange={(value) => setMonedaBase(value as 'CLP' | 'UF' | 'USD')}>
               <SelectTrigger id="monedaBase" className="bg-card">
                 <SelectValue placeholder="Seleccionar moneda" />
