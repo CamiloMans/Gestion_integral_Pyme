@@ -79,6 +79,10 @@ function formatAmount(value: number, moneda: MonedaProyecto) {
   }).format(value);
 }
 
+function formatPercentage(value: number | null) {
+  return value === null ? null : `${Math.round(value)}%`;
+}
+
 function statusTag(flag: boolean) {
   return flag ? "SI" : "NO";
 }
@@ -241,6 +245,7 @@ export default function ControlPagosHitos() {
 
     let pagado = 0;
     let facturadoNoPagado = 0;
+    let facturadoTotal = 0;
     for (const hito of hitos) {
       const monto = Number(hito.montoHito) || 0;
       if (hito.pagado) {
@@ -248,7 +253,12 @@ export default function ControlPagosHitos() {
       } else if (hito.facturado) {
         facturadoNoPagado += monto;
       }
+      if (hito.facturado) {
+        facturadoTotal += monto;
+      }
     }
+
+    const percentageOfTotal = (value: number) => (totalProyectado > 0 ? (value / totalProyectado) * 100 : null);
 
     return {
       nombre: project.nombre,
@@ -257,6 +267,11 @@ export default function ControlPagosHitos() {
       pagado,
       facturadoNoPagado,
       porPagar: totalProyectado - pagado,
+      porFacturar: totalProyectado - facturadoTotal,
+      porcentajePagado: percentageOfTotal(pagado),
+      porcentajeFacturadoNoPagado: percentageOfTotal(facturadoNoPagado),
+      porcentajePorFacturar: percentageOfTotal(totalProyectado - facturadoTotal),
+      porcentajePorPagar: percentageOfTotal(totalProyectado - pagado),
     };
   }, [projectFilter, proyectos, hitosPagoProyecto]);
 
@@ -526,31 +541,55 @@ export default function ControlPagosHitos() {
       </div>
 
       {projectSummary && (
-        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Monto total CLP</p>
-            <p className="mt-1 text-xl font-bold text-foreground">
-              {formatAmount(projectSummary.totalProyectado, projectSummary.moneda)}
-            </p>
-          </div>
-          <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Pagado</p>
-            <p className="mt-1 text-xl font-bold text-emerald-600">
-              {formatAmount(projectSummary.pagado, projectSummary.moneda)}
-            </p>
-          </div>
-          <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Facturado sin pagar</p>
-            <p className="mt-1 text-xl font-bold text-amber-600">
-              {formatAmount(projectSummary.facturadoNoPagado, projectSummary.moneda)}
-            </p>
-          </div>
-          <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-xs font-medium uppercase text-muted-foreground">Falta por pagar</p>
-            <p className="mt-1 text-xl font-bold text-blue-600">
-              {formatAmount(projectSummary.porPagar, projectSummary.moneda)}
-            </p>
-          </div>
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {[
+            {
+              label: "Monto total CLP",
+              value: projectSummary.totalProyectado,
+              valueClassName: "text-foreground",
+              percentage: null,
+            },
+            {
+              label: "Pagado",
+              value: projectSummary.pagado,
+              valueClassName: "text-emerald-600",
+              percentage: projectSummary.porcentajePagado,
+            },
+            {
+              label: "Facturado sin pagar",
+              value: projectSummary.facturadoNoPagado,
+              valueClassName: "text-amber-600",
+              percentage: projectSummary.porcentajeFacturadoNoPagado,
+            },
+            {
+              label: "Falta por facturar",
+              value: projectSummary.porFacturar,
+              valueClassName: "text-purple-600",
+              percentage: projectSummary.porcentajePorFacturar,
+            },
+            {
+              label: "Falta por pagar",
+              value: projectSummary.porPagar,
+              valueClassName: "text-blue-600",
+              percentage: projectSummary.porcentajePorPagar,
+            },
+          ].map((card) => {
+            const percentage = formatPercentage(card.percentage);
+
+            return (
+              <div key={card.label} className="relative rounded-xl border bg-card p-4 pr-20 shadow-sm">
+                {percentage && (
+                  <span className="absolute right-3 top-3 rounded-full bg-muted px-2 py-0.5 text-xs font-semibold tabular-nums text-muted-foreground">
+                    {percentage}
+                  </span>
+                )}
+                <p className="text-xs font-medium uppercase text-muted-foreground">{card.label}</p>
+                <p className={`mt-1 text-xl font-bold tabular-nums ${card.valueClassName}`}>
+                  {formatAmount(card.value, projectSummary.moneda)}
+                </p>
+              </div>
+            );
+          })}
         </div>
       )}
 
