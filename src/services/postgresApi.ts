@@ -233,6 +233,121 @@ type AsistenciaRegistroInput = {
   accuracyMeters?: number | null;
 };
 
+type ReportesFilterInput = {
+  proyectoId?: string;
+  ingresos?: 'con_ingresos' | 'sin_ingresos' | 'todos';
+  year?: string;
+  month?: string;
+};
+
+type ReportesBreakdown = {
+  name: string;
+  amountClp: number;
+  percentage: number | null;
+};
+
+type ReportesProject = {
+  id: string;
+  name: string;
+  code: string | null;
+  currency: MonedaProyecto | null;
+  budgetClp: number | null;
+  expensesHistoricalClp: number;
+  expensesPeriodClp: number;
+  executionPercentage: number | null;
+  estimatedMarginClp: number | null;
+  estimatedMarginPercentage: number | null;
+  paidClp: number;
+  invoicedPendingClp: number;
+  toInvoiceClp: number | null;
+  toCollectClp: number | null;
+  nextMilestoneDate: string | null;
+  overdueDays: number;
+  overdueMilestonesCount: number;
+  milestoneCount: number;
+  health: 'sobre_presupuesto' | 'atencion' | 'en_rango' | 'sin_presupuesto';
+};
+
+type ReportesPortafolioResponse = {
+  summary: {
+    totalProjects: number;
+    projectsWithBudget: number;
+    portfolioClp: number;
+    historicalExpensesClp: number;
+    periodExpensesClp: number;
+    estimatedMarginClp: number;
+    estimatedMarginPercentage: number | null;
+    paidClp: number;
+    invoicedPendingClp: number;
+    toInvoiceClp: number;
+    toCollectClp: number;
+  };
+  paidMilestones: {
+    totalCount: number;
+    totalClp: number;
+    items: Array<{
+      id: string;
+      projectId: string;
+      projectName: string;
+      projectCode: string | null;
+      milestoneNumber: number | null;
+      paymentDate: string | null;
+      amountClp: number;
+      invoiced: boolean;
+    }>;
+    isTruncated: boolean;
+  };
+  historicalCategories: ReportesBreakdown[];
+  historicalSuppliers: ReportesBreakdown[];
+  trend: Array<{
+    period: string;
+    label: string;
+    expensesClp: number;
+    paymentsClp: number;
+  }>;
+  collections: {
+    segments: Array<{
+      key: string;
+      label: string;
+      amountClp: number;
+    }>;
+    excessInvoicedClp: number;
+  };
+  categories: ReportesBreakdown[];
+  suppliers: ReportesBreakdown[];
+  projects: ReportesProject[];
+  alerts: {
+    overBudget: Array<{ id: string; name: string; amountClp: number }>;
+    overdueMilestones: Array<{
+      id: string;
+      projectId: string;
+      projectName: string;
+      date: string;
+      amountClp: number;
+    }>;
+    missingBudget: Array<{ id: string; name: string }>;
+    unassignedExpenses: { count: number; amountClp: number };
+    unconvertibleMilestones: Array<{
+      id: string;
+      projectId: string;
+      projectName: string;
+      amount: number;
+      currency: string;
+    }>;
+  };
+  meta: {
+    filters: {
+      proyectoId: string;
+      ingresos: 'con_ingresos' | 'sin_ingresos' | 'todos';
+      year: string;
+      month: string;
+    };
+    availableYears: string[];
+    availableProjects: Array<{ id: string; name: string; code: string | null }>;
+    generatedAt: string;
+  };
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 class ApiError extends Error {
@@ -356,6 +471,17 @@ export const postgresApi = {
 
   getConfiguracion() {
     return request<ConfiguracionResponse>('/api/configuracion');
+  },
+
+  getReportesPortafolio(filters: ReportesFilterInput = {}) {
+    const searchParams = new URLSearchParams({
+      proyectoId: filters.proyectoId || 'all',
+      ingresos: filters.ingresos || 'con_ingresos',
+      year: filters.year || String(new Date().getFullYear()),
+      month: filters.month || 'all',
+    });
+
+    return request<ReportesPortafolioResponse>(`/api/reportes/portafolio?${searchParams.toString()}`);
   },
 
   getUsuarios() {
@@ -653,4 +779,7 @@ export type {
   AsistenciaRecord,
   AsistenciaRegistroInput,
   AsistenciaTipoRegistro,
+  ReportesFilterInput,
+  ReportesPortafolioResponse,
+  ReportesProject,
 };

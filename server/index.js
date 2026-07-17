@@ -33,6 +33,7 @@ import {
   getDevAuthBypassDetails,
   isDevAuthBypassEnabled,
 } from './local-dev.js';
+import { buildReportesPortafolio } from './reportes.js';
 
 const app = express();
 const preferredPort = Number(process.env.PORT || 3001);
@@ -63,9 +64,9 @@ const STORAGE_API_URL = String(process.env.STORAGE_API_URL || '').replace(/\/+$/
 const STORAGE_API_SECRET = String(process.env.STORAGE_API_SECRET || '');
 const LOCAL_STORAGE_DIR = String(process.env.LOCAL_STORAGE_DIR || '.storage/documentos').trim() || '.storage/documentos';
 const MAX_GASTO_ATTACHMENT_SIZE_MB = Number(process.env.MAX_GASTO_ATTACHMENT_SIZE_MB || 25);
-const ANTHROPIC_API_KEY = String(process.env.API_KEY_ANTHROPIC || process.env.ANTHROPIC_API_KEY || '').trim();
-const ANTHROPIC_EXTRACTION_MODEL = String(process.env.ANTHROPIC_EXTRACTION_MODEL || 'claude-sonnet-4-20250514').trim();
-const ANTHROPIC_EXTRACTION_FALLBACK_MODEL = String(process.env.ANTHROPIC_EXTRACTION_FALLBACK_MODEL || 'claude-opus-4-1-20250805').trim();
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || '').trim();
+const OPENAI_EXTRACTION_MODEL = String(process.env.OPENAI_EXTRACTION_MODEL || 'gpt-5.4-mini').trim();
+const OPENAI_EXTRACTION_FALLBACK_MODEL = String(process.env.OPENAI_EXTRACTION_FALLBACK_MODEL || 'gpt-5.4').trim();
 const hasRemoteStorageConfig = Boolean(STORAGE_API_URL && STORAGE_API_SECRET);
 const hasPartialRemoteStorageConfig = Boolean(STORAGE_API_URL || STORAGE_API_SECRET);
 const localStorageRootDir = path.resolve(rootDir, LOCAL_STORAGE_DIR);
@@ -81,6 +82,7 @@ let controlPagosHitoDocumentosSchemaPromise = null;
 let documentosSchemaPromise = null;
 let gastoDocumentosSchemaPromise = null;
 let asistenciaSchemaPromise = null;
+let proyectoIngresosSchemaPromise = null;
 
 function isValidPort(value) {
   return Number.isInteger(value) && value > 0 && value < 65536;
@@ -152,6 +154,7 @@ const proyectoInputSchema = z.object({
   codigoProyecto: z.string().optional().nullable(),
   montoTotalProyecto: z.coerce.number().optional().nullable(),
   monedaBase: z.enum(['CLP', 'UF', 'USD']).optional().nullable(),
+  generaIngresos: z.boolean().optional().nullable(),
 });
 
 const categoriaInputSchema = z.object({
@@ -282,6 +285,13 @@ const updateUserInputSchema = z.object({
 
 const asistenciaDashboardQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(90).optional().default(30),
+});
+
+const reportesQuerySchema = z.object({
+  proyectoId: z.union([z.literal('all'), z.string().uuid()]).optional().default('all'),
+  ingresos: z.enum(['con_ingresos', 'sin_ingresos', 'todos']).optional().default('con_ingresos'),
+  year: z.string().regex(/^\d{4}$/, 'El ano debe tener formato YYYY.').optional().default(String(new Date().getFullYear())),
+  month: z.string().regex(/^(all|0[1-9]|1[0-2])$/, 'El mes debe tener formato MM.').optional().default('all'),
 });
 
 const asistenciaRegistroInputSchema = z.object({
@@ -714,23 +724,9 @@ function normalizeExtractionPayload(rawPayload, metadata) {
   };
 }
 
-function validateAnthropicRuntimeApiKey() {
-  if (!ANTHROPIC_API_KEY) {
-    throw createStorageError('API_KEY_ANTHROPIC no esta configurada en el backend.', 500);
-  }
-
-  if (ANTHROPIC_API_KEY.startsWith('amsk-')) {
-    throw createStorageError(
-      'API_KEY_ANTHROPIC parece ser una Admin API key de Anthropic. Para extraer documentos usa una API key normal de Console que empiece con sk-ant-.',
-      500,
-    );
-  }
-
-  if (!ANTHROPIC_API_KEY.startsWith('sk-ant-')) {
-    throw createStorageError(
-      'API_KEY_ANTHROPIC no parece una API key valida de Anthropic. Debe empezar con sk-ant-.',
-      500,
-    );
+function validateOpenAiRuntimeApiKey() {
+  if (!OPENAI_API_KEY) {
+    throw createStorageError('OPENAI_API_KEY no esta configurada en el backend.', 500);
   }
 }
 
@@ -778,21 +774,21 @@ function getExpenseExtractionJsonSchema() {
   };
 }
 
-function extractAnthropicToolInput(responseBody) {
-  for (const contentItem of responseBody?.content || []) {
-    if (contentItem?.type === 'tool_use' && contentItem?.input) {
-      return contentItem.input;
-    }
-  }
-
+function extractOpenAiStructuredOutput(responseBody) {
   const textChunks = [];
-  for (const contentItem of responseBody?.content || []) {
-    if (contentItem?.type === 'text' && typeof contentItem?.text === 'string') {
-      textChunks.push(contentItem.text);
+  if (typeof responseBody?.output_text === 'string') {
+    textChunks.push(responseBody.output_text);
+  }
+
+  for (const outputItem of responseBody?.output || []) {
+    for (const contentItem of outputItem?.content || []) {
+      if (contentItem?.type === 'output_text' && typeof contentItem?.text === 'string') {
+        textChunks.push(contentItem.text);
+      }
     }
   }
 
-  const outputText = textChunks.join('\n').trim();
+  const outputText = Array.from(new Set(textChunks)).join('\n').trim();
   if (!outputText) {
     return null;
   }
@@ -804,7 +800,7 @@ function extractAnthropicToolInput(responseBody) {
   }
 }
 
-function buildAnthropicExtractionMessages(file, mimeType) {
+function buildOpenAiExtractionInput(file, mimeType) {
   const base64File = file.buffer.toString('base64');
   const prompt = [
     'Extrae datos de un gasto chileno para llenar formulario Rekosol.',
@@ -822,75 +818,68 @@ function buildAnthropicExtractionMessages(file, mimeType) {
 
   if (mimeType.startsWith('image/')) {
     content.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mimeType,
-        data: base64File,
-      },
+      type: 'input_image',
+      image_url: `data:${mimeType};base64,${base64File}`,
+      detail: 'high',
     });
   } else if (mimeType === 'application/pdf') {
     content.push({
-      type: 'document',
-      source: {
-        type: 'base64',
-        media_type: 'application/pdf',
-        data: base64File,
-      },
+      type: 'input_file',
+      filename: file.originalname || 'documento.pdf',
+      file_data: `data:application/pdf;base64,${base64File}`,
     });
   } else {
     const xmlText = file.buffer.toString('utf8').slice(0, 120000);
     content.push({
-      type: 'text',
+      type: 'input_text',
       text: `Contenido XML del documento:\n${xmlText}`,
     });
   }
 
-  content.push({ type: 'text', text: prompt });
+  content.push({ type: 'input_text', text: prompt });
 
   return [{ role: 'user', content }];
 }
 
-async function requestAnthropicExpenseExtraction({ file, mimeType, model }) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+async function requestOpenAiExpenseExtraction({ file, mimeType, model }) {
+  const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1200,
-      messages: buildAnthropicExtractionMessages(file, mimeType),
-      tools: [
-        {
-          name: 'record_expense_document_extraction',
-          description: 'Registra los campos extraidos desde un documento tributario o comprobante chileno.',
-          input_schema: getExpenseExtractionJsonSchema(),
+      max_output_tokens: 1200,
+      input: buildOpenAiExtractionInput(file, mimeType),
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'expense_document_extraction',
+          strict: true,
+          schema: getExpenseExtractionJsonSchema(),
         },
-      ],
-      tool_choice: { type: 'tool', name: 'record_expense_document_extraction' },
+      },
     }),
   });
 
   const responseBody = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const message = responseBody?.error?.message || `Anthropic respondio ${response.status}`;
+    const message = responseBody?.error?.message || `OpenAI respondio ${response.status}`;
     throw new Error(message);
   }
 
-  const toolInput = extractAnthropicToolInput(responseBody);
-  if (!toolInput) {
-    throw new Error('Anthropic no devolvio datos estructurados.');
+  const structuredOutput = extractOpenAiStructuredOutput(responseBody);
+  if (!structuredOutput) {
+    throw new Error('OpenAI no devolvio datos estructurados.');
   }
 
-  return toolInput;
+  return structuredOutput;
 }
 
 async function extractExpenseDocument(file) {
-  validateAnthropicRuntimeApiKey();
+  validateOpenAiRuntimeApiKey();
 
   if (!file?.buffer?.length) {
     throw createStorageError('Debes adjuntar un archivo para extraer datos.', 400);
@@ -908,14 +897,14 @@ async function extractExpenseDocument(file) {
   }
 
   const models = Array.from(new Set([
-    ANTHROPIC_EXTRACTION_MODEL,
-    ANTHROPIC_EXTRACTION_FALLBACK_MODEL,
+    OPENAI_EXTRACTION_MODEL,
+    OPENAI_EXTRACTION_FALLBACK_MODEL,
   ].filter(Boolean)));
   const errors = [];
 
   for (const model of models) {
     try {
-      const rawPayload = await requestAnthropicExpenseExtraction({ file, mimeType, model });
+      const rawPayload = await requestOpenAiExpenseExtraction({ file, mimeType, model });
       return normalizeExtractionPayload(rawPayload, {
         model,
         fileName: file.originalname || 'documento',
@@ -968,6 +957,35 @@ async function getActiveColumnName(tableName) {
   return null;
 }
 
+async function ensureProyectoIngresosSchema() {
+  if (proyectoIngresosSchemaPromise) {
+    return proyectoIngresosSchemaPromise;
+  }
+
+  proyectoIngresosSchemaPromise = (async () => {
+    const columns = await getTableColumns('dim_proyecto');
+    if (columns.has('genera_ingresos')) {
+      return;
+    }
+
+    await query(`
+      alter table dim_proyecto
+      add column if not exists genera_ingresos boolean not null default true
+    `);
+    await query(`
+      update dim_proyecto
+      set genera_ingresos = false
+      where upper(trim(nombre)) in ('00 REKOSOL GENERAL', '01 REKOSOL OFICINA', 'PRUEBA')
+    `);
+    tableColumnsCache.delete('dim_proyecto');
+  })().catch((error) => {
+    proyectoIngresosSchemaPromise = null;
+    throw error;
+  });
+
+  return proyectoIngresosSchemaPromise;
+}
+
 function getRowActiveValue(row) {
   if (typeof row.activo === 'boolean') {
     return row.activo;
@@ -1001,6 +1019,7 @@ function mapProyecto(row) {
     montoTotalProyecto: normalizeNumeric(row.monto_total_proyecto) ?? undefined,
     montoTotalClp: normalizeNumeric(row.monto_total_clp) ?? undefined,
     monedaBase: row.moneda_base || undefined,
+    generaIngresos: row.genera_ingresos !== false,
     activo: getRowActiveValue(row),
     createdAt: row.created_at,
   };
@@ -1651,6 +1670,8 @@ async function deactivateOrDeleteDimension(tenantId, tableName, itemId) {
 }
 
 async function fetchBootstrapData(tenantId) {
+  await ensureProyectoIngresosSchema();
+
   const [
     empresaActiveColumn,
     proyectoActiveColumn,
@@ -1728,6 +1749,8 @@ async function fetchBootstrapData(tenantId) {
 }
 
 async function fetchConfigurationData(tenantId) {
+  await ensureProyectoIngresosSchema();
+
   const [empresas, proyectos, colaboradores, categorias, tiposDocumento, tiposDocumentoProyecto] = await Promise.all([
     query(
       `
@@ -2528,6 +2551,104 @@ async function fetchHitoPagoProyectoById(tenantId, hitoId) {
   return result.rows[0] ? mapHitoPagoProyecto(result.rows[0]) : null;
 }
 
+async function fetchReportesData(tenantId) {
+  await Promise.all([ensureControlPagosHitosSchema(), ensureProyectoIngresosSchema()]);
+
+  const activeColumn = await getActiveColumnName('dim_proyecto');
+  const activeSelect = activeColumn ? `p.${activeColumn}` : 'true';
+
+  const [projects, gastos, hitos] = await Promise.all([
+    query(
+      `
+        select
+          p.id,
+          p.nombre,
+          p.codigo_proyecto,
+          p.monto_total_proyecto,
+          p.monto_total_clp,
+          p.moneda_base,
+          p.genera_ingresos,
+          ${activeSelect} as activo
+        from dim_proyecto p
+        where p.tenant_id = $1
+        order by p.nombre asc
+      `,
+      [tenantId],
+    ),
+    query(
+      `
+        select
+          g.id,
+          g.fecha,
+          g.monto_total,
+          g.proyecto_id,
+          g.categoria_id,
+          c.nombre as categoria_nombre,
+          g.empresa_id,
+          e.razon_social as empresa_nombre
+        from fct_gasto g
+        left join dim_categoria c
+          on c.id = g.categoria_id
+        left join dim_empresa e
+          on e.id = g.empresa_id
+        where g.tenant_id = $1
+      `,
+      [tenantId],
+    ),
+    query(
+      `
+        select
+           h.id,
+           h.proyecto_id,
+           h.nro_hito,
+           h.monto,
+          h.moneda,
+          h.fecha_compromiso,
+          h.fecha_pago,
+          h.facturado,
+          h.pagado
+        from ${CONTROL_PAGOS_HITOS_TABLE} h
+        where h.tenant_id = $1
+      `,
+      [tenantId],
+    ),
+  ]);
+
+  return {
+    projects: projects.rows.map((row) => ({
+      id: row.id,
+      nombre: row.nombre,
+      codigoProyecto: row.codigo_proyecto || undefined,
+      montoTotalProyecto: normalizeNumeric(row.monto_total_proyecto) ?? undefined,
+      montoTotalClp: normalizeNumeric(row.monto_total_clp) ?? undefined,
+      monedaBase: row.moneda_base || undefined,
+      generaIngresos: row.genera_ingresos !== false,
+      activo: row.activo !== false,
+    })),
+    gastos: gastos.rows.map((row) => ({
+      id: row.id,
+      fecha: row.fecha,
+      montoTotal: normalizeNumeric(row.monto_total) ?? normalizeNumeric(row.monto) ?? 0,
+      proyectoId: row.proyecto_id || null,
+      categoriaId: row.categoria_id || null,
+      categoriaNombre: row.categoria_nombre || null,
+      empresaId: row.empresa_id || null,
+      empresaNombre: row.empresa_nombre || null,
+    })),
+    hitos: hitos.rows.map((row) => ({
+      id: row.id,
+      proyectoId: row.proyecto_id,
+      nroHito: normalizeNumeric(row.nro_hito) ?? 0,
+      montoHito: normalizeNumeric(row.monto) ?? 0,
+      moneda: row.moneda || 'CLP',
+      fechaCompromiso: row.fecha_compromiso,
+      fechaPago: row.fecha_pago,
+      facturado: Boolean(row.facturado),
+      pagado: Boolean(row.pagado),
+    })),
+  };
+}
+
 async function getNextHitoNumber(tenantId, proyectoId) {
   await ensureControlPagosHitosSchema();
 
@@ -2746,6 +2867,12 @@ function normalizeRole(role) {
   return String(role || '').trim().toLowerCase();
 }
 
+function assertStaffAccess(req) {
+  if (!['admin', 'super_admin'].includes(normalizeRole(req.auth?.role))) {
+    throw createAuthError('Solo administradores pueden acceder a reportes.', 403);
+  }
+}
+
 // Determina si `actorRole` puede eliminar (desactivar) una membresia con `targetRole`.
 // super_admin puede a cualquiera; admin solo a members. La prohibicion de auto-borrado
 // se valida aparte comparando user ids.
@@ -2910,6 +3037,31 @@ app.get('/api/bootstrap', async (_req, res) => {
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Error al cargar catalogos',
     });
+  }
+});
+
+app.get('/api/reportes/portafolio', async (req, res) => {
+  try {
+    assertStaffAccess(req);
+    const tenant = await getTenant();
+    const filters = reportesQuerySchema.parse(req.query);
+    const sourceData = await fetchReportesData(tenant.id);
+    const report = buildReportesPortafolio({
+      ...sourceData,
+      filters,
+      timeZone: APP_TIMEZONE,
+    });
+
+    res.json(report);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Query invalida',
+        details: error.flatten(),
+      });
+    }
+
+    sendErrorResponse(res, error, 'No se pudo cargar reportes.');
   }
 });
 
@@ -3241,6 +3393,7 @@ app.post('/api/proyectos', async (req, res) => {
   try {
     const tenant = await getTenant();
     const payload = proyectoInputSchema.parse(req.body);
+    await ensureProyectoIngresosSchema();
     const activeColumn = await getActiveColumnName('dim_proyecto');
     const montoNumeric = normalizeNumeric(payload.montoTotalProyecto);
     const monedaEfectiva = resolveProyectoMonedaBase(montoNumeric, payload.monedaBase);
@@ -3253,6 +3406,7 @@ app.post('/api/proyectos', async (req, res) => {
       'monto_total_proyecto',
       'moneda_base',
       'monto_total_clp',
+      'genera_ingresos',
     ];
     const values = [
       randomUUID(),
@@ -3262,6 +3416,7 @@ app.post('/api/proyectos', async (req, res) => {
       montoNumeric,
       monedaEfectiva,
       montoTotalClp,
+      payload.generaIngresos ?? true,
     ];
 
     if (activeColumn) {
@@ -3301,6 +3456,7 @@ app.put('/api/proyectos/:id', async (req, res) => {
     const payload = proyectoInputSchema.extend({
       activo: z.boolean().optional().nullable(),
     }).parse(req.body);
+    await ensureProyectoIngresosSchema();
     const activeColumn = await getActiveColumnName('dim_proyecto');
     const montoNumeric = normalizeNumeric(payload.montoTotalProyecto);
     const monedaEfectiva = resolveProyectoMonedaBase(montoNumeric, payload.monedaBase);
@@ -3313,11 +3469,12 @@ app.put('/api/proyectos/:id', async (req, res) => {
       montoNumeric,
       monedaEfectiva,
       montoTotalClp,
+      payload.generaIngresos ?? true,
     ];
 
     let activeFragment = '';
     if (activeColumn) {
-      activeFragment = `,\n          ${activeColumn} = $8`;
+      activeFragment = `,\n          ${activeColumn} = $9`;
       values.push(payload.activo ?? true);
     }
 
@@ -3329,7 +3486,8 @@ app.put('/api/proyectos/:id', async (req, res) => {
           codigo_proyecto = $4,
           monto_total_proyecto = $5,
           moneda_base = $6,
-          monto_total_clp = $7${activeFragment},
+          monto_total_clp = $7,
+          genera_ingresos = $8${activeFragment},
           updated_at = now()
         where tenant_id = $1
           and id = $2

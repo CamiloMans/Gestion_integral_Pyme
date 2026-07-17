@@ -23,7 +23,6 @@ interface LayoutProps {
 }
 
 const gastosNavItems = [
-  { path: '/', label: 'Reportes', icon: BarChart3, staffOnly: true },
   { path: '/gastos', label: 'Gastos', icon: Receipt },
   { path: '/empresas', label: 'Configuracion', icon: Settings },
 ];
@@ -147,6 +146,7 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
   const isGastosSectionActive = gastosNavItems.some((item) => item.path === location.pathname);
   const isControlPagosSectionActive = controlPagosNavItems.some((item) => item.path === location.pathname);
   const isAsistenciaSectionActive = location.pathname === '/asistencia' || location.pathname.startsWith('/asistencia/');
+  const isReportesActive = location.pathname === '/reportes';
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -275,6 +275,22 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
                   );
                 })}
               </div>
+            )}
+
+            {(isAdmin || isSuperAdmin) && (
+              <Link
+                to="/reportes"
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-colors',
+                  isReportesActive
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground hover:bg-sidebar-accent/50',
+                )}
+              >
+                <BarChart3 size={20} />
+                <span className="flex-1 text-left">Dashboard</span>
+              </Link>
             )}
 
             <button

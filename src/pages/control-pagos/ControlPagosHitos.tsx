@@ -5,7 +5,13 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DocumentoViewer } from "@/components/DocumentoViewer";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -114,6 +120,7 @@ export default function ControlPagosHitos() {
   const [form, setForm] = useState<HitoFormState>(initialForm);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [invoiceConfirmationOpen, setInvoiceConfirmationOpen] = useState(false);
   const [documentosModalOpen, setDocumentosModalOpen] = useState(false);
   const [selectedHitoForDocumentos, setSelectedHitoForDocumentos] = useState<HitoPagoProyecto | undefined>();
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -375,34 +382,40 @@ export default function ControlPagosHitos() {
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveHito = async (facturadoOverride?: boolean) => {
     if (saveLockRef.current) return;
+
+    const project = proyectos.find((item) => String(item.id) === String(form.proyectoId));
+
+    if (!project) {
+      toast({
+        title: "Proyecto invalido",
+        description: "Debes seleccionar un proyecto valido.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const montoHitoValue = parseNumericInput(form.montoHito, { allowDecimal: true, maxDecimals: 2 });
+    if (!Number.isFinite(montoHitoValue) || montoHitoValue <= 0) {
+      toast({
+        title: "Monto invalido",
+        description: "El monto del hito debe ser mayor a 0.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (facturadoOverride === undefined && form.pagado && !form.facturado) {
+      setInvoiceConfirmationOpen(true);
+      return;
+    }
 
     saveLockRef.current = true;
     setSaving(true);
 
     try {
-      const project = proyectos.find((item) => String(item.id) === String(form.proyectoId));
-
-      if (!project) {
-        toast({
-          title: "Proyecto invalido",
-          description: "Debes seleccionar un proyecto valido.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const montoHitoValue = parseNumericInput(form.montoHito, { allowDecimal: true, maxDecimals: 2 });
-      if (!Number.isFinite(montoHitoValue) || montoHitoValue <= 0) {
-        toast({
-          title: "Monto invalido",
-          description: "El monto del hito debe ser mayor a 0.",
-          variant: "destructive",
-        });
-        return;
-      }
+      const facturado = facturadoOverride === undefined ? form.facturado : facturadoOverride;
 
       const payload: HitoPagoProyectoCreateInput = {
         proyectoId: form.proyectoId,
@@ -410,7 +423,7 @@ export default function ControlPagosHitos() {
         moneda: form.moneda,
         fechaCompromiso: form.fechaCompromiso,
         fechaPago: form.fechaPago || undefined,
-        facturado: form.facturado,
+        facturado,
         pagado: form.pagado,
         observacion: normalizeObservacion(form.observacion),
       };
@@ -478,6 +491,17 @@ export default function ControlPagosHitos() {
       saveLockRef.current = false;
       setSaving(false);
     }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await saveHito();
+  };
+
+  const handleInvoiceDecision = (facturado: boolean) => {
+    setForm((prev) => ({ ...prev, facturado }));
+    setInvoiceConfirmationOpen(false);
+    void saveHito(facturado);
   };
 
   const confirmDelete = async () => {
@@ -998,6 +1022,25 @@ export default function ControlPagosHitos() {
         }}
         archivo={selectedArchivo}
       />
+
+      <Dialog open={invoiceConfirmationOpen} onOpenChange={setInvoiceConfirmationOpen}>
+        <DialogContent className="bg-card sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar estado de facturacion</DialogTitle>
+            <DialogDescription>
+              Este hito esta marcado como pagado, pero no como facturado. Confirma si la factura fue generada antes de guardar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" variant="outline" onClick={() => handleInvoiceDecision(false)}>
+              No, pagado sin factura
+            </Button>
+            <Button type="button" onClick={() => handleInvoiceDecision(true)}>
+              Si, fue facturado
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={Boolean(deleteId)}

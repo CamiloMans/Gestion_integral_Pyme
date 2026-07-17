@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Proyecto } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import { toast } from '@/hooks/use-toast';
@@ -21,6 +22,7 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
   const [codigoProyecto, setCodigoProyecto] = useState('');
   const [montoTotalProyecto, setMontoTotalProyecto] = useState('');
   const [monedaBase, setMonedaBase] = useState<'' | 'CLP' | 'UF' | 'USD'>('');
+  const [generaIngresos, setGeneraIngresos] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -33,11 +35,13 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
           : ''
       );
       setMonedaBase(proyecto.monedaBase || '');
+      setGeneraIngresos(proyecto.generaIngresos !== false);
     } else {
       setNombre('');
       setCodigoProyecto('');
       setMontoTotalProyecto('');
       setMonedaBase('');
+      setGeneraIngresos(true);
     }
   }, [proyecto, open]);
 
@@ -63,6 +67,7 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
         codigoProyecto: codigoProyecto.trim() ? codigoProyecto.trim().toUpperCase() : undefined,
         montoTotalProyecto: Number.isFinite(montoTotalProyectoParsed) ? montoTotalProyectoParsed : undefined,
         monedaBase: monedaBase || undefined,
+        generaIngresos,
       });
       onClose();
     } catch (error) {
@@ -142,6 +147,11 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
             </Select>
           </div>
 
+          <div className="flex min-h-10 items-center justify-between gap-4 rounded-md border p-3">
+            <Label htmlFor="generaIngresos" className="cursor-pointer">Genera ingresos</Label>
+            <Switch id="generaIngresos" checked={generaIngresos} onCheckedChange={setGeneraIngresos} />
+          </div>
+
           <div className="flex justify-end gap-3 pt-4 border-t">
             <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
               Cancelar
@@ -156,4 +166,3 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
     </Dialog>
   );
 }
-
