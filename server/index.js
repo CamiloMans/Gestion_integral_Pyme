@@ -64,7 +64,7 @@ const STORAGE_API_URL = String(process.env.STORAGE_API_URL || '').replace(/\/+$/
 const STORAGE_API_SECRET = String(process.env.STORAGE_API_SECRET || '');
 const LOCAL_STORAGE_DIR = String(process.env.LOCAL_STORAGE_DIR || '.storage/documentos').trim() || '.storage/documentos';
 const MAX_GASTO_ATTACHMENT_SIZE_MB = Number(process.env.MAX_GASTO_ATTACHMENT_SIZE_MB || 25);
-const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || '').trim();
+const OPENAI_API_KEY = String(process.env.API_KEY_OPENAI || process.env.OPENAI_API_KEY || '').trim();
 const OPENAI_EXTRACTION_MODEL = String(process.env.OPENAI_EXTRACTION_MODEL || 'gpt-5.4-mini').trim();
 const OPENAI_EXTRACTION_FALLBACK_MODEL = String(process.env.OPENAI_EXTRACTION_FALLBACK_MODEL || 'gpt-5.4').trim();
 const hasRemoteStorageConfig = Boolean(STORAGE_API_URL && STORAGE_API_SECRET);
@@ -726,7 +726,7 @@ function normalizeExtractionPayload(rawPayload, metadata) {
 
 function validateOpenAiRuntimeApiKey() {
   if (!OPENAI_API_KEY) {
-    throw createStorageError('OPENAI_API_KEY no esta configurada en el backend.', 500);
+    throw createStorageError('API_KEY_OPENAI no esta configurada en el backend.', 500);
   }
 }
 
