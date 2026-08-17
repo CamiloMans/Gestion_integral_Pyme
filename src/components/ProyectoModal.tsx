@@ -15,14 +15,16 @@ interface ProyectoModalProps {
   onClose: () => void;
   onSave: (proyecto: Omit<Proyecto, 'id' | 'createdAt'>) => void | Promise<void>;
   proyecto?: Proyecto;
+  canManageHourEligibility?: boolean;
 }
 
-export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModalProps) {
+export function ProyectoModal({ open, onClose, onSave, proyecto, canManageHourEligibility = false }: ProyectoModalProps) {
   const [nombre, setNombre] = useState('');
   const [codigoProyecto, setCodigoProyecto] = useState('');
   const [montoTotalProyecto, setMontoTotalProyecto] = useState('');
   const [monedaBase, setMonedaBase] = useState<'' | 'CLP' | 'UF' | 'USD'>('');
   const [generaIngresos, setGeneraIngresos] = useState(true);
+  const [permiteCargaHoras, setPermiteCargaHoras] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -36,12 +38,14 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
       );
       setMonedaBase(proyecto.monedaBase || '');
       setGeneraIngresos(proyecto.generaIngresos !== false);
+      setPermiteCargaHoras(proyecto.permiteCargaHoras === true);
     } else {
       setNombre('');
       setCodigoProyecto('');
       setMontoTotalProyecto('');
       setMonedaBase('');
       setGeneraIngresos(true);
+      setPermiteCargaHoras(false);
     }
   }, [proyecto, open]);
 
@@ -62,13 +66,19 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
     setIsSaving(true);
 
     try {
-      await onSave({
+      const payload: Omit<Proyecto, 'id' | 'createdAt'> = {
         nombre: nombre.trim().toUpperCase(),
         codigoProyecto: codigoProyecto.trim() ? codigoProyecto.trim().toUpperCase() : undefined,
         montoTotalProyecto: Number.isFinite(montoTotalProyectoParsed) ? montoTotalProyectoParsed : undefined,
         monedaBase: monedaBase || undefined,
         generaIngresos,
-      });
+      };
+
+      if (canManageHourEligibility) {
+        payload.permiteCargaHoras = permiteCargaHoras;
+      }
+
+      await onSave(payload);
       onClose();
     } catch (error) {
       console.error('Error al guardar proyecto:', error);
@@ -151,6 +161,16 @@ export function ProyectoModal({ open, onClose, onSave, proyecto }: ProyectoModal
             <Label htmlFor="generaIngresos" className="cursor-pointer">Genera ingresos</Label>
             <Switch id="generaIngresos" checked={generaIngresos} onCheckedChange={setGeneraIngresos} />
           </div>
+
+          {canManageHourEligibility && (
+            <div className="flex min-h-10 items-center justify-between gap-4 rounded-md border border-sky-200 bg-sky-50/60 p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="permiteCargaHoras" className="cursor-pointer">Permite cargar horas</Label>
+                <p className="text-xs text-muted-foreground">El proyecto aparecerá disponible para los trabajadores.</p>
+              </div>
+              <Switch id="permiteCargaHoras" checked={permiteCargaHoras} onCheckedChange={setPermiteCargaHoras} />
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4 border-t">
             <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>

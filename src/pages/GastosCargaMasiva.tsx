@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Eye, FileUp, Loader2, Save, Upload, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Eye, FileUp, Loader2, Plus, Save, Upload, XCircle } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
+import { EmpresaModal } from '@/components/EmpresaModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DocumentoViewer } from '@/components/DocumentoViewer';
 import { toast } from '@/hooks/use-toast';
-import { formatCurrency, type Gasto } from '@/data/mockData';
+import { formatCurrency, type Empresa, type Gasto } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import {
   isExtractableDocument,
@@ -21,6 +22,8 @@ import {
   validateGastoDraft,
 } from '@/lib/gasto-document';
 import { postgresApi, type BootstrapResponse, type GastoDocumentExtractionResult } from '@/services/postgresApi';
+import { useAppAuth } from '@/hooks/useAppAuth';
+import { getDefaultRoute, hasPermission, PERMISSIONS } from '@/lib/access-control';
 
 type BulkRowStatus = 'pendiente' | 'extrayendo' | 'listo' | 'error' | 'validado' | 'guardando' | 'guardado';
 type EmpresaMatchInfo = ReturnType<typeof resolveEmpresaMatch>;
@@ -101,12 +104,14 @@ function statusBadge(row: BulkGastoRow) {
 }
 
 export default function GastosCargaMasiva() {
+  const { session } = useAppAuth();
   const navigate = useNavigate();
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BulkGastoRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [bulkApply, setBulkApply] = useState<BulkApplyDraft>({});
+  const [empresaModalOpen, setEmpresaModalOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
   const [isDragging, setIsDragging] = useState(false);
@@ -125,6 +130,33 @@ export default function GastosCargaMasiva() {
   const validatedRows = rows.filter((row) => row.status === 'validado');
   const selectedRowsCount = rows.filter((row) => row.selected && row.status !== 'guardado').length;
   const extractionInProgress = rows.some((row) => row.status === 'extrayendo' || row.status === 'pendiente');
+
+  const handleCreateEmpresa = async (nuevaEmpresa: Omit<Empresa, 'id' | 'createdAt'>) => {
+    try {
+      const empresaCreada = await postgresApi.createEmpresa(nuevaEmpresa);
+      setBootstrap((current) => current ? {
+        ...current,
+        empresas: [
+          ...current.empresas.filter((item) => item.id !== empresaCreada.id),
+          empresaCreada,
+        ],
+      } : current);
+      setBulkApply((current) => ({ ...current, empresaId: empresaCreada.id }));
+      setEmpresaModalOpen(false);
+      toast({
+        title: 'Empresa creada',
+        description: 'La empresa se guardo correctamente en PostgreSQL.',
+        variant: 'success',
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Error al crear la empresa',
+        variant: 'destructive',
+      });
+      throw error;
+    }
+  };
 
   const validateRow = useCallback((draft: BulkGastoDraft) => {
     return validateGastoDraft({
@@ -422,7 +454,14 @@ export default function GastosCargaMasiva() {
         title="Carga masiva"
         subtitle={loading ? 'Cargando configuracion...' : `${rows.length} documento(s), ${validatedRows.length} validado(s)`}
         actions={[
-          { label: 'Volver', onClick: () => navigate('/gastos'), icon: <ArrowLeft size={18} />, variant: 'outline' },
+          {
+            label: 'Volver',
+            onClick: () => navigate(
+              hasPermission(session, PERMISSIONS.EXPENSES_RECORDS) ? '/gastos' : getDefaultRoute(session),
+            ),
+            icon: <ArrowLeft size={18} />,
+            variant: 'outline',
+          },
           { label: 'Guardar validados', onClick: saveValidatedRows, icon: saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} /> },
         ]}
       />
@@ -438,10 +477,23 @@ export default function GastosCargaMasiva() {
           </div>
           <div className="min-w-[220px] flex-1">
             <Label className="text-xs">Empresa</Label>
-            <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={bulkApply.empresaId || ''} onChange={(e) => setBulkApply((prev) => ({ ...prev, empresaId: e.target.value }))}>
-              <option value="">Sin cambio</option>
-              {sortedEmpresas.map((item) => <option key={item.id} value={item.id}>{item.razonSocial}</option>)}
-            </select>
+            <div className="flex gap-2">
+              <select className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm" value={bulkApply.empresaId || ''} onChange={(e) => setBulkApply((prev) => ({ ...prev, empresaId: e.target.value }))}>
+                <option value="">Sin cambio</option>
+                {sortedEmpresas.map((item) => <option key={item.id} value={item.id}>{item.razonSocial}</option>)}
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 shrink-0"
+                onClick={() => setEmpresaModalOpen(true)}
+                aria-label="Agregar empresa"
+                title="Agregar empresa"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <div className="min-w-[180px] flex-1">
             <Label className="text-xs">Proyecto</Label>
@@ -670,6 +722,12 @@ export default function GastosCargaMasiva() {
           }
         }}
         archivo={selectedPreviewFile}
+      />
+
+      <EmpresaModal
+        open={empresaModalOpen}
+        onClose={() => setEmpresaModalOpen(false)}
+        onSave={handleCreateEmpresa}
       />
     </Layout>
   );

@@ -1,14 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   BarChart3,
   CalendarDays,
-  CheckCircle2,
   CircleDollarSign,
   Clock3,
   FolderKanban,
-  Receipt,
   RefreshCw,
   TrendingDown,
   TrendingUp,
@@ -32,6 +31,9 @@ import {
 } from 'recharts';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
+import { AlertsPanel } from '@/components/reportes/AlertsPanel';
+import { useAppAuth } from '@/hooks/useAppAuth';
+import { hasPermission, PERMISSIONS } from '@/lib/access-control';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -388,69 +390,6 @@ function LoadingState() {
   );
 }
 
-function AlertsPanel({ data }: { data: ReportesPortafolioResponse }) {
-  const { alerts } = data;
-  const alertCount = alerts.overBudget.length
-    + alerts.overdueMilestones.length
-    + alerts.missingBudget.length
-    + alerts.unconvertibleMilestones.length
-    + (alerts.unassignedExpenses.count > 0 ? 1 : 0);
-
-  return (
-    <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Control de calidad</p>
-          <h2 className="mt-1 text-lg font-semibold text-foreground text-balance">Alertas para decidir</h2>
-        </div>
-        <Badge variant={alertCount > 0 ? 'destructive' : 'secondary'}>
-          {alertCount > 0 ? `${alertCount} alertas` : 'Sin alertas'}
-        </Badge>
-      </div>
-
-      {alertCount === 0 ? (
-        <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-          <CheckCircle2 className="h-5 w-5 shrink-0" />
-          <p>Datos suficientes para este corte.</p>
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {alerts.overBudget.length > 0 && (
-            <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-              <TrendingUp className="mt-0.5 h-4 w-4 shrink-0" />
-              <div><p className="font-semibold">{alerts.overBudget.length} proyecto(s) sobre presupuesto</p><p className="mt-1 text-xs text-red-700">Revisar desviaciones de gasto.</p></div>
-            </div>
-          )}
-          {alerts.overdueMilestones.length > 0 && (
-            <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
-              <div><p className="font-semibold">{alerts.overdueMilestones.length} hito(s) vencido(s)</p><p className="mt-1 text-xs text-amber-700">Facturar o gestionar cobro.</p></div>
-            </div>
-          )}
-          {alerts.missingBudget.length > 0 && (
-            <div className="flex gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-              <FolderKanban className="mt-0.5 h-4 w-4 shrink-0" />
-              <div><p className="font-semibold">{alerts.missingBudget.length} proyecto(s) sin presupuesto</p><p className="mt-1 text-xs text-slate-600">No entran en porcentajes de cartera.</p></div>
-            </div>
-          )}
-          {alerts.unassignedExpenses.count > 0 && (
-            <div className="flex gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-              <Receipt className="mt-0.5 h-4 w-4 shrink-0" />
-              <div><p className="font-semibold">{alerts.unassignedExpenses.count} gasto(s) sin proyecto</p><p className="mt-1 text-xs text-blue-700">Total periodo: {formatAmount(alerts.unassignedExpenses.amountClp)}.</p></div>
-            </div>
-          )}
-          {alerts.unconvertibleMilestones.length > 0 && (
-            <div className="flex gap-3 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 sm:col-span-2">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div><p className="font-semibold">{alerts.unconvertibleMilestones.length} hito(s) sin conversion CLP</p><p className="mt-1 text-xs text-orange-700">No entran en totales hasta completar moneda o monto base.</p></div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function CollectionBar({ data }: { data: ReportesPortafolioResponse }) {
   const total = Math.max(
     data.summary.portfolioClp,
@@ -762,14 +701,34 @@ function ProjectsTable({ data }: { data: ReportesPortafolioResponse }) {
 }
 
 export default function Reportes() {
+  const { session } = useAppAuth();
   const currentYear = String(new Date().getFullYear());
-  const [tab, setTab] = useState<ReportTab>('resumen');
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get('tab');
+  const initialIncome = searchParams.get('ingresos');
+  const [tab, setTab] = useState<ReportTab>(initialTab === 'proyectos' || initialTab === 'gastos' ? initialTab : 'resumen');
   const [filters, setFilters] = useState({
-    proyectoId: 'all',
-    ingresos: 'con_ingresos' as 'con_ingresos' | 'sin_ingresos' | 'todos',
-    year: currentYear,
-    month: 'all',
+    proyectoId: searchParams.get('proyectoId') || 'all',
+    ingresos: (initialIncome === 'sin_ingresos' || initialIncome === 'todos' ? initialIncome : 'con_ingresos') as 'con_ingresos' | 'sin_ingresos' | 'todos',
+    year: searchParams.get('year') || currentYear,
+    month: searchParams.get('month') || 'all',
   });
+
+  useEffect(() => {
+    const nextTab = searchParams.get('tab');
+    if (nextTab === 'resumen' || nextTab === 'proyectos' || nextTab === 'gastos') {
+      setTab(nextTab);
+    }
+
+    const nextIncome = searchParams.get('ingresos');
+    setFilters((current) => ({
+      ...current,
+      proyectoId: searchParams.get('proyectoId') || current.proyectoId,
+      ingresos: nextIncome === 'con_ingresos' || nextIncome === 'sin_ingresos' || nextIncome === 'todos' ? nextIncome : current.ingresos,
+      year: searchParams.get('year') || current.year,
+      month: searchParams.get('month') || current.month,
+    }));
+  }, [searchParams]);
 
   const query = useQuery({
     queryKey: ['reportes-portafolio', filters],
@@ -850,7 +809,12 @@ export default function Reportes() {
             </div>
             <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
               <CollectionBar data={data} />
-              <AlertsPanel data={data} />
+              <AlertsPanel
+                data={data}
+                canOpenExpenses={hasPermission(session, PERMISSIONS.EXPENSES_RECORDS)}
+                canOpenProjects={hasPermission(session, PERMISSIONS.PROJECT_CONTROL_PROJECTS)}
+                canOpenMilestones={hasPermission(session, PERMISSIONS.PROJECT_CONTROL_MILESTONES)}
+              />
             </div>
             <TrendChart data={data} />
           </TabsContent>

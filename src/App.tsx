@@ -17,19 +17,56 @@ import ControlPagosProyectos from "./pages/control-pagos/ControlPagosProyectos";
 import ControlPagosDocumentosPg from "./pages/control-pagos/ControlPagosDocumentosPg";
 import ControlPagosHitos from "./pages/control-pagos/ControlPagosHitos";
 import Asistencia from "./pages/Asistencia";
+import Horas from "./pages/Horas";
+import NoAccess from "./pages/NoAccess";
+import { getDefaultRoute, hasAnyPermission, PERMISSIONS, type PermissionKey } from "@/lib/access-control";
 
 const queryClient = new QueryClient();
 const Reportes = lazy(() => import("./pages/Reportes"));
 
-const StaffRoute = ({ children }: { children: ReactNode }) => {
+const PermissionRoute = ({ children, permissions }: { children: ReactNode; permissions: PermissionKey[] }) => {
   const { session } = useAppAuth();
 
-  if (session?.role !== 'super_admin' && session?.role !== 'admin') {
-    return <Navigate to="/gastos" replace />;
+  if (!hasAnyPermission(session, permissions)) {
+    return <Navigate to={getDefaultRoute(session)} replace />;
   }
 
   return <>{children}</>;
 };
+
+const SuperAdminRoute = ({ children }: { children: ReactNode }) => {
+  const { session } = useAppAuth();
+  return session?.role === 'super_admin' ? <>{children}</> : <Navigate to={getDefaultRoute(session)} replace />;
+};
+
+const HomeRedirect = () => {
+  const { session } = useAppAuth();
+  return <Navigate to={getDefaultRoute(session)} replace />;
+};
+
+const HoursRedirect = () => {
+  const { session } = useAppAuth();
+
+  if (hasAnyPermission(session, [PERMISSIONS.HOURS_PERSONAL])) {
+    return <Navigate to="/horas/carga" replace />;
+  }
+
+  if (hasAnyPermission(session, [PERMISSIONS.HOURS_DASHBOARD])) {
+    return <Navigate to="/horas/dashboard" replace />;
+  }
+
+  return <Navigate to={getDefaultRoute(session)} replace />;
+};
+
+const SETTINGS_PERMISSIONS = [
+  PERMISSIONS.SETTINGS_COMPANIES,
+  PERMISSIONS.SETTINGS_PROJECTS,
+  PERMISSIONS.SETTINGS_COLLABORATORS,
+  PERMISSIONS.SETTINGS_USERS,
+  PERMISSIONS.SETTINGS_EXPENSE_CATEGORIES,
+  PERMISSIONS.SETTINGS_EXPENSE_DOCUMENT_TYPES,
+  PERMISSIONS.SETTINGS_PROJECT_DOCUMENT_TYPES,
+] as PermissionKey[];
 
 const AppRoutes = () => {
   return (
@@ -37,16 +74,20 @@ const AppRoutes = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<AppAuthGuard />}>
-          <Route path="/" element={<StaffRoute><Navigate to="/reportes" replace /></StaffRoute>} />
-          <Route path="/reportes" element={<StaffRoute><Reportes /></StaffRoute>} />
-          <Route path="/gastos" element={<Gastos />} />
-          <Route path="/gastos/carga-masiva" element={<GastosCargaMasiva />} />
-          <Route path="/empresas" element={<Empresas />} />
-          <Route path="/check-fields" element={<CheckFields />} />
-          <Route path="/control-pagos/proyectos" element={<ControlPagosProyectos />} />
-          <Route path="/control-pagos/documentos" element={<ControlPagosDocumentosPg />} />
-          <Route path="/control-pagos/hitos" element={<ControlPagosHitos />} />
-          <Route path="/asistencia/*" element={<Asistencia />} />
+          <Route path="/" element={<HomeRedirect />} />
+          <Route path="/sin-acceso" element={<NoAccess />} />
+          <Route path="/reportes" element={<PermissionRoute permissions={[PERMISSIONS.REPORTS_DASHBOARD]}><Reportes /></PermissionRoute>} />
+          <Route path="/gastos" element={<PermissionRoute permissions={[PERMISSIONS.EXPENSES_RECORDS]}><Gastos /></PermissionRoute>} />
+          <Route path="/gastos/carga-masiva" element={<PermissionRoute permissions={[PERMISSIONS.EXPENSES_BULK_UPLOAD]}><GastosCargaMasiva /></PermissionRoute>} />
+          <Route path="/empresas" element={<PermissionRoute permissions={SETTINGS_PERMISSIONS}><Empresas /></PermissionRoute>} />
+          <Route path="/check-fields" element={<SuperAdminRoute><CheckFields /></SuperAdminRoute>} />
+          <Route path="/control-pagos/proyectos" element={<PermissionRoute permissions={[PERMISSIONS.PROJECT_CONTROL_PROJECTS]}><ControlPagosProyectos /></PermissionRoute>} />
+          <Route path="/control-pagos/documentos" element={<PermissionRoute permissions={[PERMISSIONS.PROJECT_CONTROL_DOCUMENTS]}><ControlPagosDocumentosPg /></PermissionRoute>} />
+          <Route path="/control-pagos/hitos" element={<PermissionRoute permissions={[PERMISSIONS.PROJECT_CONTROL_MILESTONES]}><ControlPagosHitos /></PermissionRoute>} />
+          <Route path="/asistencia/*" element={<PermissionRoute permissions={[PERMISSIONS.ATTENDANCE_PERSONAL, PERMISSIONS.ATTENDANCE_TEAM]}><Asistencia /></PermissionRoute>} />
+          <Route path="/horas" element={<HoursRedirect />} />
+          <Route path="/horas/carga" element={<PermissionRoute permissions={[PERMISSIONS.HOURS_PERSONAL]}><Horas /></PermissionRoute>} />
+          <Route path="/horas/dashboard" element={<PermissionRoute permissions={[PERMISSIONS.HOURS_DASHBOARD]}><Horas /></PermissionRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Route>
@@ -62,7 +103,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <AppAuthProvider>
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AppRoutes />
           </BrowserRouter>
         </AppAuthProvider>

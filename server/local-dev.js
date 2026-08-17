@@ -115,6 +115,7 @@ export async function ensureCoreSchema() {
         codigo_proyecto character varying,
         monto_total_proyecto numeric,
         moneda_base character varying(3),
+        permite_carga_horas boolean not null default false,
         activo boolean not null default true,
         created_at timestamp with time zone not null default now(),
         updated_at timestamp with time zone not null default now()

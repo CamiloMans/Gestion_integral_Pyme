@@ -1,4 +1,5 @@
 import type { Colaborador, Empresa, Gasto, Proyecto } from '@/data/mockData';
+import type { PermissionKey } from '@/lib/access-control';
 
 type AuthProvider = 'microsoft' | 'google';
 
@@ -21,6 +22,7 @@ type TenantMembership = {
   tenantId: string;
   rol: string;
   estado: string;
+  permissions: PermissionKey[];
   tenant: TenantInfo;
 };
 
@@ -38,6 +40,7 @@ type TenantUser = {
   estado: string;
   createdAt?: string;
   updatedAt?: string;
+  permissions: PermissionKey[];
 };
 
 type AppSession = {
@@ -46,6 +49,7 @@ type AppSession = {
   activeTenantId: string | null;
   activeTenant: TenantInfo | null;
   role: string | null;
+  permissions: PermissionKey[];
 };
 
 type CategoriaOption = {
@@ -79,6 +83,7 @@ type InviteUserInput = {
   email: string;
   nombre?: string;
   role?: UserRole;
+  permissions?: PermissionKey[];
 };
 
 type ExchangeAuthTokenInput = {
@@ -148,6 +153,54 @@ type ConfiguracionResponse = BootstrapResponse & {
 };
 
 type ProyectoCreateInput = Omit<Proyecto, 'id' | 'createdAt'>;
+
+type HorasProject = {
+  id: string;
+  nombre: string;
+  codigoProyecto?: string;
+};
+
+type HoraEntry = {
+  id: string;
+  proyectoId: string;
+  proyectoNombre: string;
+  proyectoCodigo?: string;
+  userId: string;
+  userNombre: string;
+  userEmail: string;
+  fecha: string;
+  horas: number;
+  detalle?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type HoraEntryInput = {
+  proyectoId: string;
+  fecha: string;
+  horas: number;
+  detalle?: string | null;
+};
+
+type HorasUser = {
+  id: string;
+  nombre: string;
+  email: string;
+};
+
+type HorasResponse = {
+  range: { from: string; to: string };
+  projects: HorasProject[];
+  entries: HoraEntry[];
+};
+
+type HorasDashboardResponse = {
+  filters: { from: string; to: string; proyectoId: string; userId: string };
+  projects: HorasProject[];
+  users: HorasUser[];
+  entries: HoraEntry[];
+  summary: { totalHours: number; people: number; projects: number; records: number };
+};
 type EmpresaCreateInput = Omit<Empresa, 'id' | 'createdAt'>;
 type ColaboradorCreateInput = Omit<Colaborador, 'id' | 'createdAt'>;
 type CategoriaCreateInput = Omit<CategoriaOption, 'id'>;
@@ -209,6 +262,7 @@ type AsistenciaRecord = {
   createdAt?: string;
   updatedAt?: string;
 };
+type AsistenciaUser = Pick<TenantUser, 'id' | 'email' | 'nombre' | 'role' | 'estado'>;
 type AsistenciaDashboardResponse = {
   timeZone: string;
   range: {
@@ -223,7 +277,7 @@ type AsistenciaDashboardResponse = {
     uniqueWorkersInRange: number;
   };
   currentUserOpenRecord: AsistenciaRecord | null;
-  users: TenantUser[];
+  users: AsistenciaUser[];
   records: AsistenciaRecord[];
 };
 type AsistenciaRegistroInput = {
@@ -322,15 +376,28 @@ type ReportesPortafolioResponse = {
       id: string;
       projectId: string;
       projectName: string;
+      milestoneNumber: number | null;
       date: string;
       amountClp: number;
     }>;
     missingBudget: Array<{ id: string; name: string }>;
-    unassignedExpenses: { count: number; amountClp: number };
+    unassignedExpenses: {
+      count: number;
+      amountClp: number;
+      items: Array<{
+        id: string;
+        date: string | null;
+        supplierName: string;
+        categoryName: string;
+        amountClp: number;
+      }>;
+    };
     unconvertibleMilestones: Array<{
       id: string;
       projectId: string;
       projectName: string;
+      milestoneNumber: number | null;
+      date: string | null;
       amount: number;
       currency: string;
     }>;
@@ -495,16 +562,18 @@ export const postgresApi = {
         email: usuario.email,
         nombre: usuario.nombre,
         rol: usuario.role,
+        permissions: usuario.permissions,
       }),
     });
   },
 
-  updateUsuario(membershipId: string, cambios: { nombre?: string; role?: UserRole }) {
+  updateUsuario(membershipId: string, cambios: { nombre?: string; role?: UserRole; permissions?: PermissionKey[] }) {
     return request<TenantUser>(`/api/usuarios/${membershipId}`, {
       method: 'PUT',
       body: JSON.stringify({
         nombre: cambios.nombre,
         rol: cambios.role,
+        permissions: cambios.permissions,
       }),
     });
   },
@@ -520,6 +589,11 @@ export const postgresApi = {
     return request<AsistenciaDashboardResponse>(`/api/asistencia/dashboard?${searchParams.toString()}`);
   },
 
+  getAsistenciaPersonal(days = 30) {
+    const searchParams = new URLSearchParams({ days: String(days) });
+    return request<AsistenciaDashboardResponse>(`/api/asistencia/me?${searchParams.toString()}`);
+  },
+
   registrarAsistencia(registro: AsistenciaRegistroInput) {
     return request<AsistenciaRecord>('/api/asistencia/marcar', {
       method: 'POST',
@@ -529,6 +603,34 @@ export const postgresApi = {
 
   getGastos() {
     return request<Gasto[]>('/api/gastos');
+  },
+
+  getHoras(from: string, to: string) {
+    const searchParams = new URLSearchParams({ from, to });
+    return request<HorasResponse>(`/api/horas?${searchParams.toString()}`);
+  },
+
+  createHora(entry: HoraEntryInput) {
+    return request<HoraEntry>('/api/horas', {
+      method: 'POST',
+      body: JSON.stringify(entry),
+    });
+  },
+
+  updateHora(id: string, entry: HoraEntryInput) {
+    return request<HoraEntry>(`/api/horas/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(entry),
+    });
+  },
+
+  deleteHora(id: string) {
+    return request<void>(`/api/horas/${id}`, { method: 'DELETE' });
+  },
+
+  getHorasDashboard(from: string, to: string, proyectoId = 'all', userId = 'all') {
+    const searchParams = new URLSearchParams({ from, to, proyectoId, userId });
+    return request<HorasDashboardResponse>(`/api/horas/dashboard?${searchParams.toString()}`);
   },
 
   createProyecto(proyecto: ProyectoCreateInput) {
@@ -761,6 +863,12 @@ export type {
   EmpresaCreateInput,
   HitoPagoProyecto,
   HitoPagoProyectoCreateInput,
+  HoraEntry,
+  HoraEntryInput,
+  HorasDashboardResponse,
+  HorasProject,
+  HorasResponse,
+  HorasUser,
   MonedaProyecto,
   ProyectoCreateInput,
   SessionUser,
@@ -777,6 +885,7 @@ export type {
   ExchangeAuthTokenInput,
   AsistenciaDashboardResponse,
   AsistenciaRecord,
+  AsistenciaUser,
   AsistenciaRegistroInput,
   AsistenciaTipoRegistro,
   ReportesFilterInput,

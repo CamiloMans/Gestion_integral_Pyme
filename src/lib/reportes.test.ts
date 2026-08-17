@@ -37,12 +37,12 @@ describe('buildReportesPortafolio', () => {
       gastos: [
         { id: 'gasto-1', fecha: '2026-01-10', montoTotal: 400, proyectoId: 'project-1', categoriaNombre: 'Materiales', empresaNombre: 'Proveedor Uno' },
         { id: 'gasto-2', fecha: '2025-12-10', montoTotal: 100, proyectoId: 'project-1', categoriaNombre: 'Materiales', empresaNombre: 'Proveedor Uno' },
-        { id: 'gasto-3', fecha: '2026-01-05', montoTotal: 50, proyectoId: null },
+        { id: 'gasto-3', fecha: '2026-01-05', montoTotal: 50, proyectoId: null, categoriaNombre: 'Traslados', empresaNombre: 'Proveedor Dos' },
       ],
       hitos: [
         { id: 'hito-1', proyectoId: 'project-1', montoHito: 200, moneda: 'CLP', fechaCompromiso: '2026-01-01', fechaPago: '2026-01-15', facturado: true, pagado: true },
-        { id: 'hito-2', proyectoId: 'project-1', montoHito: 300, moneda: 'CLP', fechaCompromiso: '2026-02-01', facturado: true, pagado: false },
-        { id: 'hito-3', proyectoId: 'project-1', montoHito: 100, moneda: 'CLP', fechaCompromiso: '2026-01-20', facturado: false, pagado: false },
+        { id: 'hito-2', proyectoId: 'project-1', nroHito: 2, montoHito: 300, moneda: 'CLP', fechaCompromiso: '2026-02-01', facturado: true, pagado: false },
+        { id: 'hito-3', proyectoId: 'project-1', nroHito: 3, montoHito: 100, moneda: 'CLP', fechaCompromiso: '2026-01-20', facturado: false, pagado: false },
       ],
       filters: { year: '2026', month: 'all', ingresos: 'con_ingresos', proyectoId: 'all' },
       now: new Date('2026-02-10T12:00:00Z'),
@@ -65,8 +65,22 @@ describe('buildReportesPortafolio', () => {
     expect(report.projects).toHaveLength(2);
     expect(report.projects.find((project) => project.id === 'project-2')?.health).toBe('sin_presupuesto');
     expect(report.alerts.missingBudget).toHaveLength(1);
-    expect(report.alerts.unassignedExpenses).toEqual({ count: 1, amountClp: 50 });
+    expect(report.alerts.unassignedExpenses).toEqual({
+      count: 1,
+      amountClp: 50,
+      items: [{
+        id: 'gasto-3',
+        date: '2026-01-05',
+        supplierName: 'Proveedor Dos',
+        categoryName: 'Traslados',
+        amountClp: 50,
+      }],
+    });
     expect(report.alerts.overdueMilestones).toHaveLength(2);
+    expect(report.alerts.overdueMilestones).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'hito-2', milestoneNumber: 2 }),
+      expect.objectContaining({ id: 'hito-3', milestoneNumber: 3 }),
+    ]));
   });
 
   it('convierte hitos en moneda base y marca conversiones imposibles', () => {
@@ -81,7 +95,7 @@ describe('buildReportesPortafolio', () => {
       }],
       hitos: [
         { id: 'hito-uf', proyectoId: 'project-uf', montoHito: 10, moneda: 'UF', fechaCompromiso: '2026-01-01', facturado: true, pagado: true },
-        { id: 'hito-usd', proyectoId: 'project-uf', montoHito: 10, moneda: 'USD', fechaCompromiso: '2026-01-01', facturado: true, pagado: false },
+        { id: 'hito-usd', proyectoId: 'project-uf', nroHito: 2, montoHito: 10, moneda: 'USD', fechaCompromiso: '2026-01-01', facturado: true, pagado: false },
       ],
       filters: { year: '2026', month: 'all', ingresos: 'con_ingresos', proyectoId: 'all' },
       now: new Date('2026-02-10T12:00:00Z'),
@@ -90,6 +104,11 @@ describe('buildReportesPortafolio', () => {
     expect(report.summary.paidClp).toBe(400000);
     expect(report.summary.invoicedPendingClp).toBe(0);
     expect(report.alerts.unconvertibleMilestones).toHaveLength(1);
+    expect(report.alerts.unconvertibleMilestones[0]).toEqual(expect.objectContaining({
+      id: 'hito-usd',
+      milestoneNumber: 2,
+      date: '2026-01-01',
+    }));
   });
 
   it('resume los hitos pagados, incluidos los que siguen sin factura', () => {

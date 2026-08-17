@@ -26,6 +26,7 @@ import {
   type TipoDocumentoOption,
   type TipoDocumentoProyectoOption,
 } from '@/services/postgresApi';
+import { hasPermission, PERMISSIONS, type PermissionKey } from '@/lib/access-control';
 
 type VistaConfiguracion =
   | 'empresas'
@@ -47,14 +48,15 @@ const VIEW_OPTIONS: Array<{
   label: string;
   icon: typeof Building2;
   actionLabel: string;
+  permission: PermissionKey;
 }> = [
-  { key: 'empresas', label: 'Empresas', icon: Building2, actionLabel: 'Nueva Empresa' },
-  { key: 'proyectos', label: 'Proyectos', icon: FolderKanban, actionLabel: 'Nuevo Proyecto' },
-  { key: 'colaboradores', label: 'Colaboradores', icon: Users, actionLabel: 'Nuevo Colaborador' },
-  { key: 'usuarios', label: 'Usuarios', icon: UserPlus, actionLabel: 'Invitar Usuario' },
-  { key: 'categorias', label: 'Categorias', icon: Tag, actionLabel: 'Nueva Categoria' },
-  { key: 'tiposDocumento', label: 'Tipos de Documento', icon: FileText, actionLabel: 'Nuevo Tipo' },
-  { key: 'tiposDocumentoProyecto', label: 'Docs. de Proyecto', icon: FolderTree, actionLabel: 'Nuevo Documento' },
+  { key: 'empresas', label: 'Empresas', icon: Building2, actionLabel: 'Nueva Empresa', permission: PERMISSIONS.SETTINGS_COMPANIES },
+  { key: 'proyectos', label: 'Proyectos', icon: FolderKanban, actionLabel: 'Nuevo Proyecto', permission: PERMISSIONS.SETTINGS_PROJECTS },
+  { key: 'colaboradores', label: 'Colaboradores', icon: Users, actionLabel: 'Nuevo Colaborador', permission: PERMISSIONS.SETTINGS_COLLABORATORS },
+  { key: 'usuarios', label: 'Usuarios', icon: UserPlus, actionLabel: 'Invitar Usuario', permission: PERMISSIONS.SETTINGS_USERS },
+  { key: 'categorias', label: 'Categorias', icon: Tag, actionLabel: 'Nueva Categoria', permission: PERMISSIONS.SETTINGS_EXPENSE_CATEGORIES },
+  { key: 'tiposDocumento', label: 'Tipos de Documento', icon: FileText, actionLabel: 'Nuevo Tipo', permission: PERMISSIONS.SETTINGS_EXPENSE_DOCUMENT_TYPES },
+  { key: 'tiposDocumentoProyecto', label: 'Docs. de Proyecto', icon: FolderTree, actionLabel: 'Nuevo Documento', permission: PERMISSIONS.SETTINGS_PROJECT_DOCUMENT_TYPES },
 ];
 
 function sortByLabel<T>(items: T[], getLabel: (item: T) => string) {
@@ -107,11 +109,22 @@ function formatAuthProviders(authProviders: TenantUser['authProviders']) {
     .join(', ');
 }
 
+function formatAccessSummary(user: TenantUser) {
+  if (user.role === 'super_admin') return 'Acceso total';
+  const count = user.permissions?.length || 0;
+  return count === 0 ? 'Sin accesos' : `${count} ${count === 1 ? 'vista' : 'vistas'}`;
+}
+
 export default function Empresas() {
   const { session } = useAppAuth();
   const currentRole = session?.role ?? null;
   const currentUserId = session?.user?.id ?? null;
   const canManageUsers = currentRole === 'admin' || currentRole === 'super_admin';
+  const canViewUsers = hasPermission(session, PERMISSIONS.SETTINGS_USERS);
+  const visibleViewOptions = useMemo(
+    () => VIEW_OPTIONS.filter((option) => hasPermission(session, option.permission)),
+    [session],
+  );
 
   // Un usuario es gestionable (editar/eliminar) si: soy admin/super_admin, no soy yo mismo,
   // esta activo, y (super_admin => cualquiera; admin => solo members).
@@ -127,7 +140,9 @@ export default function Empresas() {
   const [tenantUsers, setTenantUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [vista, setVista] = useState<VistaConfiguracion>('empresas');
+  const [vista, setVista] = useState<VistaConfiguracion>(() =>
+    VIEW_OPTIONS.find((option) => hasPermission(session, option.permission))?.key || 'empresas',
+  );
   const [searchTerm, setSearchTerm] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
@@ -147,7 +162,7 @@ export default function Empresas() {
     try {
       const [nextConfigData, nextTenantUsers] = await Promise.all([
         postgresApi.getConfiguracion(),
-        postgresApi.getUsuarios(),
+        canViewUsers ? postgresApi.getUsuarios() : Promise.resolve([]),
       ]);
       setConfigData(nextConfigData);
       setTenantUsers(nextTenantUsers);
@@ -159,7 +174,13 @@ export default function Empresas() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canViewUsers]);
+
+  useEffect(() => {
+    if (!visibleViewOptions.some((option) => option.key === vista) && visibleViewOptions[0]) {
+      setVista(visibleViewOptions[0].key);
+    }
+  }, [visibleViewOptions, vista]);
 
   useEffect(() => {
     void loadData();
@@ -258,8 +279,8 @@ export default function Empresas() {
   }, [tiposDocumentoProyecto, searchTerm]);
 
   const activeView = useMemo(
-    () => VIEW_OPTIONS.find((option) => option.key === vista) || VIEW_OPTIONS[0],
-    [vista],
+    () => visibleViewOptions.find((option) => option.key === vista) || visibleViewOptions[0] || VIEW_OPTIONS[0],
+    [visibleViewOptions, vista],
   );
   const ActiveViewIcon = activeView.icon;
 
@@ -443,6 +464,7 @@ export default function Empresas() {
         await postgresApi.updateUsuario(editingUsuario.membershipId, {
           nombre: payload.nombre,
           role: payload.role,
+          permissions: payload.permissions,
         });
         toast({
           title: 'Usuario actualizado',
@@ -596,7 +618,7 @@ export default function Empresas() {
 
     if (vista === 'usuarios') {
       if (filteredUsuarios.length === 0) {
-        return <TableRow><TableCell colSpan={canManageUsers ? 7 : 6} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar usuarios desde PostgreSQL' : 'No hay usuarios invitados en este tenant'}</TableCell></TableRow>;
+        return <TableRow><TableCell colSpan={canManageUsers ? 8 : 7} className="py-10 text-center text-muted-foreground">{error ? 'No se pudo cargar usuarios desde PostgreSQL' : 'No hay usuarios invitados en este tenant'}</TableCell></TableRow>;
       }
 
       return filteredUsuarios.map((item) => (
@@ -604,6 +626,7 @@ export default function Empresas() {
           <TableCell><div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted"><UserPlus size={18} className="text-muted-foreground" /></div><div><p className="font-medium">{item.nombre}</p><p className="text-sm text-muted-foreground">{item.authLinked ? `Proveedores vinculados: ${formatAuthProviders(item.authProviders)}` : 'Pendiente del primer ingreso'}</p></div></div></TableCell>
           <TableCell>{item.email}</TableCell>
           <TableCell>{renderRoleBadge(item.role)}</TableCell>
+          <TableCell><span className="text-sm text-muted-foreground">{formatAccessSummary(item)}</span></TableCell>
           <TableCell>{renderInvitationBadge(item.invitationState)}</TableCell>
           <TableCell>{renderStatusBadge(item.estado !== 'inactivo')}</TableCell>
           <TableCell>{formatDateLong(item.createdAt || '')}</TableCell>
@@ -680,7 +703,7 @@ export default function Empresas() {
       <PageHeader
         title="Configuracion"
         subtitle={loading ? 'Cargando catalogos desde PostgreSQL...' : `${currentCount} registros en ${activeView.label.toLowerCase()}`}
-        action={{ label: activeView.actionLabel, onClick: openCreateModal }}
+        action={vista !== 'usuarios' || canManageUsers ? { label: activeView.actionLabel, onClick: openCreateModal } : undefined}
       />
 
       <div className="mb-6 rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -690,13 +713,13 @@ export default function Empresas() {
             <Input placeholder={`Buscar en ${activeView.label.toLowerCase()}...`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
           </div>
 
-          <Button type="button" onClick={openCreateModal} className="sm:hidden gap-2">
+          {(vista !== 'usuarios' || canManageUsers) && <Button type="button" onClick={openCreateModal} className="sm:hidden gap-2">
             <ActiveViewIcon size={16} />
             {activeView.actionLabel}
-          </Button>
+          </Button>}
 
           <div className="flex flex-wrap gap-2">
-            {VIEW_OPTIONS.map((option) => {
+            {visibleViewOptions.map((option) => {
               const Icon = option.icon;
               return (
                 <Button key={option.key} type="button" variant={vista === option.key ? 'default' : 'outline'} className="gap-2" onClick={() => setVista(option.key)}>
@@ -715,7 +738,7 @@ export default function Empresas() {
                 {vista === 'empresas' && (<><TableHead className="font-semibold">EMPRESA</TableHead><TableHead className="font-semibold">RUT</TableHead><TableHead className="font-semibold">CONTACTO</TableHead><TableHead className="font-semibold">CREADA</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'proyectos' && (<><TableHead className="font-semibold">PROYECTO</TableHead><TableHead className="font-semibold">MONEDA</TableHead><TableHead className="font-semibold">MONTO TOTAL</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'colaboradores' && (<><TableHead className="font-semibold">COLABORADOR</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">TELEFONO</TableHead><TableHead className="font-semibold">CARGO</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
-                {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead>{canManageUsers && <TableHead className="text-center font-semibold">ACCIONES</TableHead>}</>)}
+                {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">ACCESOS</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead>{canManageUsers && <TableHead className="text-center font-semibold">ACCIONES</TableHead>}</>)}
                 {vista === 'categorias' && (<><TableHead className="font-semibold">CATEGORIA</TableHead><TableHead className="font-semibold">COLOR</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumento' && (<><TableHead className="font-semibold">TIPO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">TIENE IMPUESTOS</TableHead><TableHead className="font-semibold">VALOR IMPUESTOS</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'tiposDocumentoProyecto' && (<><TableHead className="font-semibold">DOCUMENTO</TableHead><TableHead className="font-semibold">DESCRIPCION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}

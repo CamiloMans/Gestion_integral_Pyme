@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { CategoryBadge } from '@/components/CategoryBadge';
@@ -17,6 +17,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { toast } from '@/hooks/use-toast';
 import { postgresApi, type BootstrapResponse, type CategoriaOption, type TipoDocumentoOption } from '@/services/postgresApi';
 import { useAppAuth } from '@/hooks/useAppAuth';
+import { hasPermission, PERMISSIONS } from '@/lib/access-control';
 
 const PAGE_SIZE = 50;
 const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
@@ -51,6 +52,8 @@ function sortByRazonSocial<T extends { razonSocial: string }>(items: T[]) {
 
 export default function Gastos() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const processedGastoIdRef = useRef<string | null>(null);
   const { session } = useAppAuth();
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [gastos, setGastos] = useState<Gasto[]>([]);
@@ -466,6 +469,19 @@ export default function Gastos() {
     setDetalleGastoOpen(true);
   };
 
+  useEffect(() => {
+    const gastoId = searchParams.get('gastoId');
+    if (!gastoId || loading || processedGastoIdRef.current === gastoId) {
+      return;
+    }
+
+    processedGastoIdRef.current = gastoId;
+    const gasto = gastos.find((item) => String(item.id) === gastoId);
+    if (gasto) {
+      handleViewGasto(gasto);
+    }
+  }, [gastos, loading, searchParams]);
+
   const handleEditFromDetail = () => {
     if (!gastoSeleccionado) {
       return;
@@ -539,12 +555,12 @@ export default function Gastos() {
             : `${cantidadGastosTexto} gastos encontrados`
         }
         actions={[
-          {
+          ...(hasPermission(session, PERMISSIONS.EXPENSES_BULK_UPLOAD) ? [{
             label: 'Carga masiva',
             onClick: () => navigate('/gastos/carga-masiva'),
             icon: <Upload size={18} />,
-            variant: 'outline',
-          },
+            variant: 'outline' as const,
+          }] : []),
           {
             label: 'Nuevo Gasto',
             onClick: () => setModalOpen(true),

@@ -27,6 +27,7 @@ vi.mock('@/services/postgresApi', async () => {
       getBootstrap: vi.fn(),
       extractGastoDocument: vi.fn(),
       createGasto: vi.fn(),
+      createEmpresa: vi.fn(),
     },
   };
 });
@@ -102,6 +103,27 @@ describe('GastosCargaMasiva', () => {
     await waitFor(() => expect(screen.getByText('ok.pdf')).toBeInTheDocument());
     await waitFor(() => expect(screen.getByText('OCR fallido')).toBeInTheDocument());
     expect(postgresApi.extractGastoDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('creates a supplier from the bulk company selector and selects it', async () => {
+    vi.mocked(postgresApi.createEmpresa).mockResolvedValue({
+      id: 'empresa-new',
+      razonSocial: 'PROVEEDOR NUEVO SPA',
+      rut: '76123456-8',
+      createdAt: '2026-08-16',
+    });
+
+    const { container } = renderPage();
+    await screen.findByText('Seleccionar documentos');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar empresa' }));
+    fireEvent.change(screen.getByLabelText('Nombre Empresa *'), { target: { value: 'Proveedor Nuevo SPA' } });
+    fireEvent.change(screen.getByLabelText(/Rut/), { target: { value: '76123456-8' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+
+    await waitFor(() => expect(postgresApi.createEmpresa).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((container.querySelectorAll('select')[1] as HTMLSelectElement).value).toBe('empresa-new'));
+    expect(screen.getByRole('option', { name: 'PROVEEDOR NUEVO SPA' })).toBeInTheDocument();
   });
 
   it('saves only validated rows', async () => {

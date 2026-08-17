@@ -17,6 +17,7 @@ export interface Proyecto {
   montoTotalClp?: number;
   monedaBase?: 'CLP' | 'UF' | 'USD';
   generaIngresos?: boolean;
+  permiteCargaHoras?: boolean;
   activo?: boolean;
   createdAt: string;
 }

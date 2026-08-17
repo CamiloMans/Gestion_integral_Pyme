@@ -34,6 +34,15 @@ import {
   isDevAuthBypassEnabled,
 } from './local-dev.js';
 import { buildReportesPortafolio } from './reportes.js';
+import { assertCanManageProjectHours, ensureHorasSchema, registerHorasRoutes } from './horas.js';
+import { ALL_PERMISSIONS, PERMISSIONS } from '../shared/access-control.js';
+import {
+  assertPermission,
+  assertSuperAdmin,
+  ensureAccessControlSchema,
+  loadMembershipPermissions,
+  replaceMembershipPermissions,
+} from './access-control.js';
 
 const app = express();
 const preferredPort = Number(process.env.PORT || 3001);
@@ -155,6 +164,7 @@ const proyectoInputSchema = z.object({
   montoTotalProyecto: z.coerce.number().optional().nullable(),
   monedaBase: z.enum(['CLP', 'UF', 'USD']).optional().nullable(),
   generaIngresos: z.boolean().optional().nullable(),
+  permiteCargaHoras: z.boolean().optional().nullable(),
 });
 
 const categoriaInputSchema = z.object({
@@ -276,11 +286,13 @@ const inviteUserInputSchema = z.object({
   email: z.string().trim().email(),
   nombre: z.string().optional().nullable().or(z.literal('')),
   rol: z.enum(['member', 'admin', 'super_admin']).optional().default('member'),
+  permissions: z.array(z.enum(ALL_PERMISSIONS)).optional(),
 });
 
 const updateUserInputSchema = z.object({
   nombre: z.string().optional().nullable().or(z.literal('')),
   rol: z.enum(['member', 'admin', 'super_admin']).optional(),
+  permissions: z.array(z.enum(ALL_PERMISSIONS)).optional(),
 });
 
 const asistenciaDashboardQuerySchema = z.object({
@@ -1020,6 +1032,7 @@ function mapProyecto(row) {
     montoTotalClp: normalizeNumeric(row.monto_total_clp) ?? undefined,
     monedaBase: row.moneda_base || undefined,
     generaIngresos: row.genera_ingresos !== false,
+    permiteCargaHoras: row.permite_carga_horas === true,
     activo: getRowActiveValue(row),
     createdAt: row.created_at,
   };
@@ -1670,7 +1683,7 @@ async function deactivateOrDeleteDimension(tenantId, tableName, itemId) {
 }
 
 async function fetchBootstrapData(tenantId) {
-  await ensureProyectoIngresosSchema();
+  await Promise.all([ensureProyectoIngresosSchema(), ensureHorasSchema()]);
 
   const [
     empresaActiveColumn,
@@ -1749,7 +1762,7 @@ async function fetchBootstrapData(tenantId) {
 }
 
 async function fetchConfigurationData(tenantId) {
-  await ensureProyectoIngresosSchema();
+  await Promise.all([ensureProyectoIngresosSchema(), ensureHorasSchema()]);
 
   const [empresas, proyectos, colaboradores, categorias, tiposDocumento, tiposDocumentoProyecto] = await Promise.all([
     query(
@@ -1820,6 +1833,7 @@ async function fetchConfigurationData(tenantId) {
 
 async function fetchTenantUsers(tenantId, db = query) {
   await ensureUserAuthIdentitiesSchema();
+  await ensureAccessControlSchema();
 
   const result = await db(
     `
@@ -1852,11 +1866,15 @@ async function fetchTenantUsers(tenantId, db = query) {
     [tenantId],
   );
 
-  return result.rows.map(mapTenantUser);
+  return Promise.all(result.rows.map(async (row) => ({
+    ...mapTenantUser(row),
+    permissions: await loadMembershipPermissions(row.membership_id, row.rol, db),
+  })));
 }
 
 async function fetchTenantUserByUserId(tenantId, userId, db = query) {
   await ensureUserAuthIdentitiesSchema();
+  await ensureAccessControlSchema();
 
   const result = await db(
     `
@@ -1890,7 +1908,15 @@ async function fetchTenantUserByUserId(tenantId, userId, db = query) {
     [tenantId, userId],
   );
 
-  return result.rows[0] ? mapTenantUser(result.rows[0]) : null;
+  if (!result.rows[0]) return null;
+  return {
+    ...mapTenantUser(result.rows[0]),
+    permissions: await loadMembershipPermissions(
+      result.rows[0].membership_id,
+      result.rows[0].rol,
+      db,
+    ),
+  };
 }
 
 async function fetchAsistenciaRecordById(tenantId, asistenciaId, db = query) {
@@ -1996,7 +2022,9 @@ async function fetchAsistenciaDashboard(tenantId, currentUserId, { days = 30 } =
   rangeStartDate.setDate(rangeStartDate.getDate() - Math.max(0, days - 1));
   const startDate = formatDateInTimeZone(rangeStartDate, APP_TIMEZONE);
   const recordsInRange = records.filter((record) => record.workDate >= startDate);
-  const activeUsers = users.filter((user) => user.estado !== 'inactivo');
+  const activeUsers = users
+    .filter((user) => user.estado !== 'inactivo')
+    .map(({ id, email, nombre, role, estado }) => ({ id, email, nombre, role, estado }));
 
   return {
     timeZone: APP_TIMEZONE,
@@ -2013,6 +2041,55 @@ async function fetchAsistenciaDashboard(tenantId, currentUserId, { days = 30 } =
     },
     currentUserOpenRecord,
     users: activeUsers,
+    records,
+  };
+}
+
+async function fetchAsistenciaPersonal(tenantId, currentUserId, { days = 30 } = {}) {
+  await ensureAsistenciaSchema();
+  const today = formatDateInTimeZone(new Date(), APP_TIMEZONE);
+  const rangeStartDate = new Date();
+  rangeStartDate.setDate(rangeStartDate.getDate() - Math.max(0, days - 1));
+  const startDate = formatDateInTimeZone(rangeStartDate, APP_TIMEZONE);
+  const result = await query(
+    `
+      select
+        a.*,
+        u.nombre as user_nombre,
+        u.email as user_email,
+        tm.rol as user_role
+      from ${ASISTENCIA_TABLE} a
+      inner join users u on u.id = a.user_id
+      left join tenant_memberships tm
+        on tm.tenant_id = a.tenant_id and tm.user_id = a.user_id
+      where a.tenant_id = $1
+        and a.user_id = $2
+        and (a.work_date >= $3 or a.salida_at is null)
+      order by a.work_date desc, a.entrada_at desc
+    `,
+    [tenantId, currentUserId, startDate],
+  );
+  const records = result.rows.map(mapAsistenciaRecord);
+  const recordsInRange = records.filter((record) => record.workDate >= startDate);
+  const currentUser = await fetchTenantUserByUserId(tenantId, currentUserId);
+
+  return {
+    timeZone: APP_TIMEZONE,
+    range: { days, startDate, endDate: today },
+    summary: {
+      activeNow: records.some((record) => !record.salidaAt) ? 1 : 0,
+      completedToday: records.filter((record) => record.workDate === today && Boolean(record.salidaAt)).length,
+      recordsInRange: recordsInRange.length,
+      uniqueWorkersInRange: recordsInRange.length > 0 ? 1 : 0,
+    },
+    currentUserOpenRecord: records.find((record) => !record.salidaAt) || null,
+    users: currentUser ? [{
+      id: currentUser.id,
+      email: currentUser.email,
+      nombre: currentUser.nombre,
+      role: currentUser.role,
+      estado: currentUser.estado,
+    }] : [],
     records,
   };
 }
@@ -2852,6 +2929,10 @@ function sendErrorResponse(res, error, fallbackMessage) {
   res.status(statusCode).json({
     error: persistenceErrorMessages[String(error?.code || '')]
       || (error instanceof Error ? error.message : fallbackMessage),
+    ...(error?.code === 'PERMISSION_DENIED' ? {
+      code: 'PERMISSION_DENIED',
+      ...(error.permission ? { permission: error.permission } : {}),
+    } : {}),
   });
 }
 
@@ -2865,12 +2946,6 @@ function attachAuthToRequest(req, authSession) {
 
 function normalizeRole(role) {
   return String(role || '').trim().toLowerCase();
-}
-
-function assertStaffAccess(req) {
-  if (!['admin', 'super_admin'].includes(normalizeRole(req.auth?.role))) {
-    throw createAuthError('Solo administradores pueden acceder a reportes.', 403);
-  }
 }
 
 // Determina si `actorRole` puede eliminar (desactivar) una membresia con `targetRole`.
@@ -2932,6 +3007,92 @@ app.use(async (req, res, next) => {
     next();
   } catch (error) {
     sendErrorResponse(res, error, 'No se pudo validar la sesion actual.');
+  }
+});
+
+const SETTINGS_PERMISSIONS = [
+  PERMISSIONS.SETTINGS_COMPANIES,
+  PERMISSIONS.SETTINGS_PROJECTS,
+  PERMISSIONS.SETTINGS_COLLABORATORS,
+  PERMISSIONS.SETTINGS_USERS,
+  PERMISSIONS.SETTINGS_EXPENSE_CATEGORIES,
+  PERMISSIONS.SETTINGS_EXPENSE_DOCUMENT_TYPES,
+  PERMISSIONS.SETTINGS_PROJECT_DOCUMENT_TYPES,
+];
+const BOOTSTRAP_PERMISSIONS = [
+  PERMISSIONS.EXPENSES_RECORDS,
+  PERMISSIONS.EXPENSES_BULK_UPLOAD,
+  PERMISSIONS.PROJECT_CONTROL_PROJECTS,
+  PERMISSIONS.PROJECT_CONTROL_MILESTONES,
+];
+
+function requiredPermissionsForRequest(req) {
+  const requestPath = req.path;
+  if (requestPath === '/api/bootstrap') return BOOTSTRAP_PERMISSIONS;
+  if (requestPath === '/api/reportes/portafolio') return [PERMISSIONS.REPORTS_DASHBOARD];
+  if (requestPath === '/api/configuracion') return [...SETTINGS_PERMISSIONS, PERMISSIONS.PROJECT_CONTROL_DOCUMENTS];
+  if (requestPath.startsWith('/api/usuarios')) return [PERMISSIONS.SETTINGS_USERS];
+  if (requestPath === '/api/asistencia/me' || requestPath === '/api/asistencia/marcar') return [PERMISSIONS.ATTENDANCE_PERSONAL];
+  if (requestPath === '/api/asistencia/dashboard') return [PERMISSIONS.ATTENDANCE_TEAM];
+  if (requestPath === '/api/horas/dashboard') return [PERMISSIONS.HOURS_DASHBOARD];
+  if (requestPath === '/api/horas' || requestPath.startsWith('/api/horas/')) return [PERMISSIONS.HOURS_PERSONAL];
+  if (requestPath === '/api/proyectos' || requestPath.startsWith('/api/proyectos/')) {
+    return req.method === 'POST' && requestPath === '/api/proyectos'
+      ? [
+        PERMISSIONS.EXPENSES_RECORDS,
+        PERMISSIONS.EXPENSES_BULK_UPLOAD,
+        PERMISSIONS.SETTINGS_PROJECTS,
+        PERMISSIONS.PROJECT_CONTROL_PROJECTS,
+      ]
+      : [PERMISSIONS.SETTINGS_PROJECTS, PERMISSIONS.PROJECT_CONTROL_PROJECTS];
+  }
+  if (requestPath === '/api/categorias' || requestPath.startsWith('/api/categorias/')) {
+    return req.method === 'POST' && requestPath === '/api/categorias'
+      ? [PERMISSIONS.EXPENSES_RECORDS, PERMISSIONS.EXPENSES_BULK_UPLOAD, PERMISSIONS.SETTINGS_EXPENSE_CATEGORIES]
+      : [PERMISSIONS.SETTINGS_EXPENSE_CATEGORIES];
+  }
+  if (requestPath === '/api/empresas' || requestPath.startsWith('/api/empresas/')) {
+    return req.method === 'POST' && requestPath === '/api/empresas'
+      ? [PERMISSIONS.EXPENSES_RECORDS, PERMISSIONS.EXPENSES_BULK_UPLOAD, PERMISSIONS.SETTINGS_COMPANIES]
+      : [PERMISSIONS.SETTINGS_COMPANIES];
+  }
+  if (requestPath === '/api/colaboradores' || requestPath.startsWith('/api/colaboradores/')) {
+    return [PERMISSIONS.SETTINGS_COLLABORATORS];
+  }
+  if (requestPath === '/api/tipos-documento' || requestPath.startsWith('/api/tipos-documento/')) {
+    return [PERMISSIONS.SETTINGS_EXPENSE_DOCUMENT_TYPES];
+  }
+  if (requestPath === '/api/tipos-documento-proyecto' || requestPath.startsWith('/api/tipos-documento-proyecto/')) {
+    return [PERMISSIONS.SETTINGS_PROJECT_DOCUMENT_TYPES, PERMISSIONS.PROJECT_CONTROL_DOCUMENTS];
+  }
+  if (requestPath.startsWith('/api/control-pagos/hitos') || requestPath.startsWith('/api/control-pagos/documentos-hito')) {
+    return [PERMISSIONS.PROJECT_CONTROL_MILESTONES];
+  }
+  if (requestPath.startsWith('/api/control-pagos/documentos')) return [PERMISSIONS.PROJECT_CONTROL_DOCUMENTS];
+  if (requestPath === '/api/gastos' && req.method === 'GET') return [PERMISSIONS.EXPENSES_RECORDS];
+  if (requestPath.startsWith('/api/gastos/extraer-documento') || (requestPath === '/api/gastos' && req.method === 'POST')) {
+    return [PERMISSIONS.EXPENSES_RECORDS, PERMISSIONS.EXPENSES_BULK_UPLOAD];
+  }
+  if (requestPath.startsWith('/api/gastos')) return [PERMISSIONS.EXPENSES_RECORDS];
+  if (requestPath.startsWith('/api/documentos/')) {
+    return [
+      PERMISSIONS.EXPENSES_RECORDS,
+      PERMISSIONS.PROJECT_CONTROL_DOCUMENTS,
+      PERMISSIONS.PROJECT_CONTROL_MILESTONES,
+    ];
+  }
+  return null;
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api') || PUBLIC_API_PATHS.has(req.path)) return next();
+  const required = requiredPermissionsForRequest(req);
+  if (!required) return next();
+  try {
+    assertPermission(req, required);
+    next();
+  } catch (error) {
+    sendErrorResponse(res, error, 'No tienes acceso a este módulo.');
   }
 });
 
@@ -3024,6 +3185,8 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+registerHorasRoutes(app);
+
 app.get('/api/bootstrap', async (_req, res) => {
   try {
     const tenant = await getTenant();
@@ -3042,7 +3205,6 @@ app.get('/api/bootstrap', async (_req, res) => {
 
 app.get('/api/reportes/portafolio', async (req, res) => {
   try {
-    assertStaffAccess(req);
     const tenant = await getTenant();
     const filters = reportesQuerySchema.parse(req.query);
     const sourceData = await fetchReportesData(tenant.id);
@@ -3115,6 +3277,21 @@ app.get('/api/asistencia/dashboard', async (req, res) => {
   }
 });
 
+app.get('/api/asistencia/me', async (req, res) => {
+  try {
+    if (!req.auth?.user?.id) throw createAuthError('No hay una sesión activa.', 401);
+    const tenant = await getTenant();
+    const queryInput = asistenciaDashboardQuerySchema.parse(req.query);
+    const dashboard = await fetchAsistenciaPersonal(tenant.id, req.auth.user.id, { days: queryInput.days });
+    res.json(dashboard);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Query invalida', details: error.flatten() });
+    }
+    sendErrorResponse(res, error, 'No se pudo cargar tu asistencia.');
+  }
+});
+
 app.post('/api/asistencia/marcar', async (req, res) => {
   try {
     if (!req.auth?.user?.id) {
@@ -3154,6 +3331,14 @@ app.post('/api/usuarios', async (req, res) => {
     const email = normalizeText(payload.email, { lowercase: true });
     const nombre = normalizeNullableText(payload.nombre);
     const rol = normalizeText(payload.rol, { lowercase: true }) || 'member';
+
+    if (!['admin', 'super_admin'].includes(normalizeRole(req.auth?.role))) {
+      throw createAuthError('Solo administradores pueden invitar usuarios.', 403);
+    }
+
+    if (payload.permissions !== undefined) {
+      assertSuperAdmin(req);
+    }
 
     if (rol === 'super_admin' && normalizeRole(req.auth?.role) !== 'super_admin') {
       throw createAuthError('Solo un super administrador puede asignar el rol super_admin.', 403);
@@ -3196,7 +3381,13 @@ app.post('/api/usuarios', async (req, res) => {
 
     const targetUserId = upsertedUserResult.rows[0]?.id;
 
-    await client.query(
+    const existingMembershipResult = await client.query(
+      `select id, estado from tenant_memberships where tenant_id = $1 and user_id = $2 limit 1`,
+      [tenant.id, targetUserId],
+    );
+    const existingMembership = existingMembershipResult.rows[0] || null;
+
+    const membershipResult = await client.query(
       `
         insert into tenant_memberships (
           id,
@@ -3213,9 +3404,20 @@ app.post('/api/usuarios', async (req, res) => {
           rol = excluded.rol,
           estado = 'activo',
           updated_at = now()
+        returning id
       `,
       [randomUUID(), tenant.id, targetUserId, rol],
     );
+    const membershipId = membershipResult.rows[0]?.id;
+
+    if (payload.permissions !== undefined || !existingMembership || existingMembership.estado === 'inactivo') {
+      await replaceMembershipPermissions(
+        (text, params) => client.query(text, params),
+        membershipId,
+        payload.permissions || [],
+        req.auth?.user?.id || null,
+      );
+    }
 
     const invitedUser = await fetchTenantUserByUserId(
       tenant.id,
@@ -3269,7 +3471,7 @@ app.delete('/api/usuarios/:id', async (req, res) => {
     const membership = membershipResult.rows[0];
 
     if (!membership) {
-      return res.status(404).json({ error: 'Usuario no encontrado en este tenant.' });
+      throw createAuthError('Usuario no encontrado en este tenant.', 404);
     }
 
     if (membership.user_id === req.auth.user.id) {
@@ -3300,6 +3502,7 @@ app.delete('/api/usuarios/:id', async (req, res) => {
 });
 
 app.put('/api/usuarios/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     if (!req.auth?.user?.id) {
       throw createAuthError('No hay una sesion activa.', 401);
@@ -3311,7 +3514,13 @@ app.put('/api/usuarios/:id', async (req, res) => {
     const nombre = normalizeNullableText(payload.nombre);
     const nuevoRol = payload.rol ? normalizeRole(payload.rol) : null;
 
-    const membershipResult = await query(
+    if (payload.permissions !== undefined) {
+      assertSuperAdmin(req);
+    }
+
+    await client.query('begin');
+
+    const membershipResult = await client.query(
       `
         select id, user_id, rol, estado
         from tenant_memberships
@@ -3325,7 +3534,7 @@ app.put('/api/usuarios/:id', async (req, res) => {
     const membership = membershipResult.rows[0];
 
     if (!membership) {
-      return res.status(404).json({ error: 'Usuario no encontrado en este tenant.' });
+      throw createAuthError('Usuario no encontrado en este tenant.', 404);
     }
 
     if (membership.user_id === req.auth.user.id) {
@@ -3350,7 +3559,7 @@ app.put('/api/usuarios/:id', async (req, res) => {
     }
 
     if (nombre) {
-      await query(
+      await client.query(
         `
           update users
           set nombre = $2,
@@ -3362,7 +3571,7 @@ app.put('/api/usuarios/:id', async (req, res) => {
     }
 
     if (nuevoRol) {
-      await query(
+      await client.query(
         `
           update tenant_memberships
           set rol = $3,
@@ -3374,10 +3583,26 @@ app.put('/api/usuarios/:id', async (req, res) => {
       );
     }
 
-    const updatedUser = await fetchTenantUserByUserId(tenant.id, membership.user_id);
+    if (payload.permissions !== undefined) {
+      await replaceMembershipPermissions(
+        (text, params) => client.query(text, params),
+        membershipId,
+        payload.permissions,
+        req.auth.user.id,
+      );
+    }
+
+    const updatedUser = await fetchTenantUserByUserId(
+      tenant.id,
+      membership.user_id,
+      (text, params) => client.query(text, params),
+    );
+
+    await client.query('commit');
 
     res.json(updatedUser);
   } catch (error) {
+    await client.query('rollback');
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         error: 'Payload invalido',
@@ -3386,14 +3611,17 @@ app.put('/api/usuarios/:id', async (req, res) => {
     }
 
     sendErrorResponse(res, error, 'No se pudo actualizar al usuario.');
+  } finally {
+    client.release();
   }
 });
 
 app.post('/api/proyectos', async (req, res) => {
   try {
     const tenant = await getTenant();
+    assertCanManageProjectHours(req.auth?.role, req.body);
     const payload = proyectoInputSchema.parse(req.body);
-    await ensureProyectoIngresosSchema();
+    await Promise.all([ensureProyectoIngresosSchema(), ensureHorasSchema()]);
     const activeColumn = await getActiveColumnName('dim_proyecto');
     const montoNumeric = normalizeNumeric(payload.montoTotalProyecto);
     const monedaEfectiva = resolveProyectoMonedaBase(montoNumeric, payload.monedaBase);
@@ -3407,6 +3635,7 @@ app.post('/api/proyectos', async (req, res) => {
       'moneda_base',
       'monto_total_clp',
       'genera_ingresos',
+      'permite_carga_horas',
     ];
     const values = [
       randomUUID(),
@@ -3417,6 +3646,7 @@ app.post('/api/proyectos', async (req, res) => {
       monedaEfectiva,
       montoTotalClp,
       payload.generaIngresos ?? true,
+      payload.permiteCargaHoras ?? false,
     ];
 
     if (activeColumn) {
@@ -3444,19 +3674,18 @@ app.post('/api/proyectos', async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Error al crear proyecto',
-    });
+    sendErrorResponse(res, error, 'Error al crear proyecto');
   }
 });
 
 app.put('/api/proyectos/:id', async (req, res) => {
   try {
     const tenant = await getTenant();
+    assertCanManageProjectHours(req.auth?.role, req.body);
     const payload = proyectoInputSchema.extend({
       activo: z.boolean().optional().nullable(),
     }).parse(req.body);
-    await ensureProyectoIngresosSchema();
+    await Promise.all([ensureProyectoIngresosSchema(), ensureHorasSchema()]);
     const activeColumn = await getActiveColumnName('dim_proyecto');
     const montoNumeric = normalizeNumeric(payload.montoTotalProyecto);
     const monedaEfectiva = resolveProyectoMonedaBase(montoNumeric, payload.monedaBase);
@@ -3470,11 +3699,12 @@ app.put('/api/proyectos/:id', async (req, res) => {
       monedaEfectiva,
       montoTotalClp,
       payload.generaIngresos ?? true,
+      payload.permiteCargaHoras ?? null,
     ];
 
     let activeFragment = '';
     if (activeColumn) {
-      activeFragment = `,\n          ${activeColumn} = $9`;
+      activeFragment = `,\n          ${activeColumn} = $10`;
       values.push(payload.activo ?? true);
     }
 
@@ -3487,7 +3717,8 @@ app.put('/api/proyectos/:id', async (req, res) => {
           monto_total_proyecto = $5,
           moneda_base = $6,
           monto_total_clp = $7,
-          genera_ingresos = $8${activeFragment},
+          genera_ingresos = $8,
+          permite_carga_horas = coalesce($9, permite_carga_horas)${activeFragment},
           updated_at = now()
         where tenant_id = $1
           and id = $2
@@ -3509,9 +3740,7 @@ app.put('/api/proyectos/:id', async (req, res) => {
       });
     }
 
-    res.status(500).json({
-      error: error instanceof Error ? error.message : 'Error al actualizar proyecto',
-    });
+    sendErrorResponse(res, error, 'Error al actualizar proyecto');
   }
 });
 
@@ -5179,9 +5408,11 @@ async function warmStartupDependencies() {
       await ensureDevSeedData();
     }
     await ensureUserAuthIdentitiesSchema();
+    await ensureAccessControlSchema();
     await ensureControlPagosHitosSchema();
     await ensureControlPagosDocumentosSchema();
     await ensureAsistenciaSchema();
+    await ensureHorasSchema();
     console.log('Inicializacion de esquemas completada correctamente.');
   } catch (error) {
     console.error(

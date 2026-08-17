@@ -2,6 +2,7 @@ import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose';
 import { query } from './db.js';
 import { ensureCoreSchema, ensureDevSeedData, isDevAuthBypassEnabled } from './local-dev.js';
+import { ensureAccessControlSchema, loadMembershipPermissions } from './access-control.js';
 
 const AUTH_PROVIDERS = Object.freeze({
   MICROSOFT: 'microsoft',
@@ -177,12 +178,13 @@ function serializeCookie(name, value, { maxAge, expires } = {}) {
   return parts.join('; ');
 }
 
-function mapMembership(row) {
+function mapMembership(row, permissions = []) {
   return {
     id: row.id,
     tenantId: row.tenant_id,
     rol: row.rol,
     estado: row.estado,
+    permissions,
     tenant: {
       id: row.tenant_id,
       slug: row.tenant_slug,
@@ -234,6 +236,7 @@ function buildSessionResponse({ user, memberships, activeTenantId, authProvider 
     activeTenantId: normalizedActiveTenantId,
     activeTenant: activeMembership ? activeMembership.tenant : null,
     role: activeMembership?.rol || null,
+    permissions: activeMembership?.permissions || [],
   };
 }
 
@@ -523,6 +526,8 @@ async function ensureIdentityLinkedToUser(user, { provider, subject }) {
 }
 
 async function loadActiveMemberships(userId) {
+  await ensureCoreSchema();
+  await ensureAccessControlSchema();
   const result = await query(
     `
       select
@@ -543,7 +548,10 @@ async function loadActiveMemberships(userId) {
     [userId],
   );
 
-  return result.rows.map(mapMembership);
+  return Promise.all(result.rows.map(async (row) => mapMembership(
+    row,
+    await loadMembershipPermissions(row.id, row.rol),
+  )));
 }
 
 async function buildAppSessionForUser(userId, activeTenantId = null, authProvider = null) {

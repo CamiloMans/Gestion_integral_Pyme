@@ -201,6 +201,8 @@ export function buildReportesPortafolio({
         id: hito.id,
         projectId: String(hito.proyectoId),
         projectName: project.nombre,
+        milestoneNumber: Number(hito.nroHito) || null,
+        date: dateKey(hito.fechaCompromiso),
         amount: toNumber(hito.montoHito) || 0,
         currency: hito.moneda || project.monedaBase || 'CLP',
       });
@@ -343,6 +345,7 @@ export function buildReportesPortafolio({
       id: hito.id,
       projectId: hito.projectId,
       projectName: projectMap.get(hito.projectId)?.nombre || 'Proyecto',
+      milestoneNumber: Number(hito.nroHito) || null,
       date: hito.commitmentDate,
       amountClp: hito.amountClp,
     })),
@@ -352,6 +355,15 @@ export function buildReportesPortafolio({
     unassignedExpenses: {
       count: unassignedExpenses.length,
       amountClp: roundClp(sumBy(unassignedExpenses, (gasto) => gasto.amountClp)),
+      items: unassignedExpenses
+        .map((gasto) => ({
+          id: String(gasto.id),
+          date: dateKey(gasto.fecha),
+          supplierName: gasto.empresaNombre || 'Proveedor no informado',
+          categoryName: gasto.categoriaNombre || 'Sin categoria',
+          amountClp: gasto.amountClp,
+        }))
+        .sort((left, right) => (right.date || '').localeCompare(left.date || '')),
     },
     unconvertibleMilestones,
   };

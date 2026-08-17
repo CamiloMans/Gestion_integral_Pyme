@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
 import { ProyectoDocumentosModal } from "@/components/control-pagos/ProyectoDocumentosModal";
@@ -11,6 +12,8 @@ import type { Proyecto } from "@/data/mockData";
 import { toast } from "@/hooks/use-toast";
 import { postgresApi } from "@/services/postgresApi";
 import { Eye, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useAppAuth } from "@/hooks/useAppAuth";
 
 function formatAmount(value?: number, moneda: "CLP" | "UF" | "USD" = "CLP") {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return "-";
@@ -33,6 +36,9 @@ function sortProyectos(items: Proyecto[]) {
 }
 
 export default function ControlPagosProyectos() {
+  const { session } = useAppAuth();
+  const [searchParams] = useSearchParams();
+  const processedProyectoIdRef = useRef<string | null>(null);
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +80,20 @@ export default function ControlPagosProyectos() {
       variant: "destructive",
     });
   }, [error]);
+
+  useEffect(() => {
+    const proyectoId = searchParams.get("proyectoId");
+    if (!proyectoId || loading || processedProyectoIdRef.current === proyectoId) {
+      return;
+    }
+
+    processedProyectoIdRef.current = proyectoId;
+    const proyecto = proyectos.find((item) => String(item.id) === proyectoId);
+    if (proyecto) {
+      setEditingProyecto(proyecto);
+      setModalOpen(true);
+    }
+  }, [loading, proyectos, searchParams]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -184,6 +204,7 @@ export default function ControlPagosProyectos() {
               <TableHead>MONTO TOTAL PROY</TableHead>
               <TableHead>MONEDA BASE</TableHead>
               <TableHead>MONTO TOTAL CLP</TableHead>
+              <TableHead className="text-center">CARGA DE HORAS</TableHead>
               <TableHead className="text-center">DOCUMENTOS</TableHead>
               <TableHead className="text-center">ACCIONES</TableHead>
             </TableRow>
@@ -195,6 +216,11 @@ export default function ControlPagosProyectos() {
                 <TableCell>{formatAmount(item.montoTotalProyecto, item.monedaBase || "CLP")}</TableCell>
                 <TableCell>{item.monedaBase || "-"}</TableCell>
                 <TableCell>{formatAmount(item.montoTotalClp, "CLP")}</TableCell>
+                <TableCell className="text-center">
+                  <Badge variant={item.permiteCargaHoras ? "default" : "secondary"}>
+                    {item.permiteCargaHoras ? "Habilitado" : "No habilitado"}
+                  </Badge>
+                </TableCell>
                 <TableCell>
                   <div className="flex justify-center gap-1">
                     <Button variant="ghost" size="icon" onClick={() => openDocumentosModal(item, "view")}>
@@ -231,7 +257,7 @@ export default function ControlPagosProyectos() {
 
             {!loading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   No hay proyectos para mostrar.
                 </TableCell>
               </TableRow>
@@ -248,6 +274,7 @@ export default function ControlPagosProyectos() {
         }}
         onSave={handleSave}
         proyecto={editingProyecto}
+        canManageHourEligibility={session?.role === "super_admin"}
       />
 
       <ProyectoDocumentosModal

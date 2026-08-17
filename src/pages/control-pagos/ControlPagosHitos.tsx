@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/PageHeader";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -108,6 +109,8 @@ function sortHitos(items: HitoPagoProyecto[]) {
 }
 
 export default function ControlPagosHitos() {
+  const [searchParams] = useSearchParams();
+  const requestedHitoId = searchParams.get("hitoId");
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [hitosPagoProyecto, setHitosPagoProyecto] = useState<HitoPagoProyecto[]>([]);
   const [documentosHito, setDocumentosHito] = useState<DocumentoHitoRecord[]>([]);
@@ -212,9 +215,13 @@ export default function ControlPagosHitos() {
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const activeHitoId = requestedHitoId && hitosPagoProyecto.some((item) => String(item.id) === requestedHitoId)
+      ? requestedHitoId
+      : null;
 
     return [...hitosPagoProyecto]
       .filter((item) => {
+        if (activeHitoId && String(item.id) !== activeHitoId) return false;
         if (projectFilter !== "all" && String(item.proyectoId) !== String(projectFilter)) return false;
         if (!query) return true;
 
@@ -236,7 +243,7 @@ export default function ControlPagosHitos() {
 
         return a.nroHito - b.nroHito;
       });
-  }, [hitosPagoProyecto, projectFilter, resolveProjectName, search]);
+  }, [hitosPagoProyecto, projectFilter, requestedHitoId, resolveProjectName, search]);
 
   const projectSummary = useMemo(() => {
     if (projectFilter === "all") return null;
@@ -638,7 +645,7 @@ export default function ControlPagosHitos() {
               const documentos = documentosByHito.get(String(item.id)) || [];
 
               return (
-                <TableRow key={item.id}>
+                <TableRow key={item.id} className={requestedHitoId === String(item.id) ? "bg-amber-50 ring-1 ring-inset ring-amber-300" : undefined}>
                   <TableCell>{resolveProjectName(item)}</TableCell>
                   <TableCell>{item.nroHito}</TableCell>
                   <TableCell>{formatAmount(item.montoHito, item.moneda)}</TableCell>

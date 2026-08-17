@@ -10,12 +10,14 @@ import {
   Plus,
   Receipt,
   Settings,
+  TimerReset,
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { AppSessionMenu } from '@/components/AppSessionMenu';
 import { useAppAuth } from '@/hooks/useAppAuth';
+import { hasAnyPermission, hasPermission, PERMISSIONS, type PermissionKey } from '@/lib/access-control';
 
 interface LayoutProps {
   children: ReactNode;
@@ -23,19 +25,37 @@ interface LayoutProps {
 }
 
 const gastosNavItems = [
-  { path: '/gastos', label: 'Gastos', icon: Receipt },
-  { path: '/empresas', label: 'Configuracion', icon: Settings },
+  { path: '/gastos', label: 'Gastos', icon: Receipt, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
+  {
+    path: '/empresas',
+    label: 'Configuracion',
+    icon: Settings,
+    permissions: [
+      PERMISSIONS.SETTINGS_COMPANIES,
+      PERMISSIONS.SETTINGS_PROJECTS,
+      PERMISSIONS.SETTINGS_COLLABORATORS,
+      PERMISSIONS.SETTINGS_USERS,
+      PERMISSIONS.SETTINGS_EXPENSE_CATEGORIES,
+      PERMISSIONS.SETTINGS_EXPENSE_DOCUMENT_TYPES,
+      PERMISSIONS.SETTINGS_PROJECT_DOCUMENT_TYPES,
+    ],
+  },
 ];
 
 const controlPagosNavItems = [
-  { path: '/control-pagos/proyectos', label: 'Proyectos', icon: Settings },
-  { path: '/control-pagos/documentos', label: 'Documentos', icon: Receipt },
-  { path: '/control-pagos/hitos', label: 'Hitos', icon: BarChart3 },
+  { path: '/control-pagos/proyectos', label: 'Proyectos', icon: Settings, permissions: [PERMISSIONS.PROJECT_CONTROL_PROJECTS] },
+  { path: '/control-pagos/documentos', label: 'Documentos', icon: Receipt, permissions: [PERMISSIONS.PROJECT_CONTROL_DOCUMENTS] },
+  { path: '/control-pagos/hitos', label: 'Hitos', icon: BarChart3, permissions: [PERMISSIONS.PROJECT_CONTROL_MILESTONES] },
 ];
 
 const asistenciaNavItems = [
-  { path: '/asistencia/registro', label: 'Registro individual', icon: Clock3 },
-  { path: '/asistencia/personal', label: 'Personal', icon: Users, adminOnly: true },
+  { path: '/asistencia/registro', label: 'Registro individual', icon: Clock3, permissions: [PERMISSIONS.ATTENDANCE_PERSONAL] },
+  { path: '/asistencia/personal', label: 'Personal', icon: Users, permissions: [PERMISSIONS.ATTENDANCE_TEAM] },
+];
+
+const horasNavItems = [
+  { path: '/horas/carga', label: 'Cargar horas', icon: Clock3, permissions: [PERMISSIONS.HOURS_PERSONAL] },
+  { path: '/horas/dashboard', label: 'Dashboard', icon: BarChart3, permissions: [PERMISSIONS.HOURS_DASHBOARD] },
 ];
 
 export function Layout({ children, onNewGasto }: LayoutProps) {
@@ -52,11 +72,14 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
   const [asistenciaMenuOpen, setAsistenciaMenuOpen] = useState(() =>
     location.pathname === '/asistencia' || location.pathname.startsWith('/asistencia/'),
   );
+  const [horasMenuOpen, setHorasMenuOpen] = useState(() =>
+    location.pathname === '/horas' || location.pathname.startsWith('/horas/'),
+  );
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
-  const isAdmin = session?.role === 'admin';
-  const isSuperAdmin = session?.role === 'super_admin';
-  const visibleAsistenciaNavItems = asistenciaNavItems.filter((item) => !item.adminOnly || isAdmin);
-  const visibleGastosNavItems = gastosNavItems.filter((item) => !item.staffOnly || isAdmin || isSuperAdmin);
+  const visibleAsistenciaNavItems = asistenciaNavItems.filter((item) => hasAnyPermission(session, item.permissions as PermissionKey[]));
+  const visibleGastosNavItems = gastosNavItems.filter((item) => hasAnyPermission(session, item.permissions as PermissionKey[]));
+  const visibleControlPagosNavItems = controlPagosNavItems.filter((item) => hasAnyPermission(session, item.permissions as PermissionKey[]));
+  const visibleHorasNavItems = horasNavItems.filter((item) => hasAnyPermission(session, item.permissions as PermissionKey[]));
   const SWIPE_THRESHOLD = 50;
   const EDGE_THRESHOLD = 30;
   const SWIPE_TIME_THRESHOLD = 300;
@@ -141,12 +164,17 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
     if (location.pathname === '/asistencia' || location.pathname.startsWith('/asistencia/')) {
       setAsistenciaMenuOpen(true);
     }
+
+    if (location.pathname === '/horas' || location.pathname.startsWith('/horas/')) {
+      setHorasMenuOpen(true);
+    }
   }, [location.pathname]);
 
   const isGastosSectionActive = gastosNavItems.some((item) => item.path === location.pathname);
   const isControlPagosSectionActive = controlPagosNavItems.some((item) => item.path === location.pathname);
   const isAsistenciaSectionActive = location.pathname === '/asistencia' || location.pathname.startsWith('/asistencia/');
   const isReportesActive = location.pathname === '/reportes';
+  const isHorasSectionActive = location.pathname === '/horas' || location.pathname.startsWith('/horas/');
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -185,6 +213,8 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
           </div>
 
           <nav className="space-y-2">
+            {visibleGastosNavItems.length > 0 && (
+              <div className="space-y-1">
             <button
               type="button"
               onClick={() => setGastosMenuOpen((prev) => !prev)}
@@ -230,7 +260,11 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
                 })}
               </div>
             )}
+              </div>
+            )}
 
+            {visibleControlPagosNavItems.length > 0 && (
+              <div className="space-y-1">
             <button
               type="button"
               onClick={() => setControlPagosMenuOpen((prev) => !prev)}
@@ -253,7 +287,7 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
 
             {controlPagosMenuOpen && (
               <div id="control-pagos-submenu" className="ml-4 space-y-1 border-l border-sidebar-border pl-3">
-                {controlPagosNavItems.map((item) => {
+                {visibleControlPagosNavItems.map((item) => {
                   const isActive = location.pathname === item.path;
                   const Icon = item.icon;
 
@@ -276,8 +310,10 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
                 })}
               </div>
             )}
+              </div>
+            )}
 
-            {(isAdmin || isSuperAdmin) && (
+            {hasPermission(session, PERMISSIONS.REPORTS_DASHBOARD) && (
               <Link
                 to="/reportes"
                 onClick={() => setMobileMenuOpen(false)}
@@ -293,6 +329,55 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
               </Link>
             )}
 
+            {visibleHorasNavItems.length > 0 && (
+              <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => setHorasMenuOpen((prev) => !prev)}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-colors',
+                isHorasSectionActive || horasMenuOpen
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'text-sidebar-foreground hover:bg-sidebar-accent/50',
+              )}
+              aria-expanded={horasMenuOpen}
+              aria-controls="horas-submenu"
+            >
+              <TimerReset size={20} />
+              <span className="flex-1 text-left">Control de Horas</span>
+              <ChevronDown size={16} className={cn('transition-transform duration-200', horasMenuOpen && 'rotate-180')} />
+            </button>
+
+            {horasMenuOpen && (
+              <div id="horas-submenu" className="ml-4 space-y-1 border-l border-sidebar-border pl-3">
+                {visibleHorasNavItems.map((item) => {
+                  const isActive = location.pathname === item.path;
+                  const Icon = item.icon;
+
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={cn(
+                        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                          : 'text-sidebar-foreground hover:bg-sidebar-accent/50',
+                      )}
+                    >
+                      <Icon size={18} />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+              </div>
+            )}
+
+            {visibleAsistenciaNavItems.length > 0 && (
+              <div className="space-y-1">
             <button
               type="button"
               onClick={() => setAsistenciaMenuOpen((prev) => !prev)}
@@ -336,6 +421,8 @@ export function Layout({ children, onNewGasto }: LayoutProps) {
                     </Link>
                   );
                 })}
+              </div>
+            )}
               </div>
             )}
           </nav>

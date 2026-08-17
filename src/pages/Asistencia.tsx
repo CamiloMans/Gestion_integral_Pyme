@@ -22,7 +22,7 @@ import {
   type AsistenciaDashboardResponse,
   type AsistenciaRecord,
   type AsistenciaTipoRegistro,
-  type TenantUser,
+  type AsistenciaUser,
 } from '@/services/postgresApi';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { hasPermission, PERMISSIONS } from '@/lib/access-control';
 
 const RANGE_OPTIONS = [
   { value: '7', label: 'Ultimos 7 dias' },
@@ -181,7 +182,7 @@ function getWorkedMinutes(record: AsistenciaRecord | null) {
   return Math.round((end - start) / 60000);
 }
 
-function getUserDisplayName(user: Pick<TenantUser, 'nombre' | 'email'> | Pick<AsistenciaRecord, 'userName' | 'userEmail'>) {
+function getUserDisplayName(user: Pick<AsistenciaUser, 'nombre' | 'email'> | Pick<AsistenciaRecord, 'userName' | 'userEmail'>) {
   if ('nombre' in user) {
     return user.nombre || user.email || 'Sin nombre';
   }
@@ -478,7 +479,7 @@ async function requestCurrentLocation() {
   }
 }
 
-function buildTeamStatusRow(user: TenantUser, todayRecord: AsistenciaRecord | null): TeamStatusRow {
+function buildTeamStatusRow(user: AsistenciaUser, todayRecord: AsistenciaRecord | null): TeamStatusRow {
   if (todayRecord && !todayRecord.salidaAt) {
     return {
       userId: user.id,
@@ -776,12 +777,21 @@ export default function Asistencia() {
   const [recordStatusFilter, setRecordStatusFilter] = useState<RecordStatusFilter>('all');
   const [exporting, setExporting] = useState(false);
 
-  const isAdmin = session?.role === 'admin';
+  const canViewPersonalAttendance = hasPermission(session, PERMISSIONS.ATTENDANCE_PERSONAL);
+  const canViewTeamAttendance = hasPermission(session, PERMISSIONS.ATTENDANCE_TEAM);
   const currentUserId = session?.user.id || '';
   const mobilePlatform = useMemo(() => getMobilePlatform(), []);
   const isLocationBusy = locationAction !== null;
   const currentView: AsistenciaView = location.pathname === ASISTENCIA_PATHS.personal ? 'personal' : 'registro';
-  const needsRedirectToRegistro = location.pathname === '/asistencia' || (!isAdmin && location.pathname === ASISTENCIA_PATHS.personal);
+  const effectiveView: AsistenciaView = currentView === 'personal' && !canViewTeamAttendance
+    ? 'registro'
+    : currentView === 'registro' && !canViewPersonalAttendance
+      ? 'personal'
+      : currentView;
+  const redirectPath = effectiveView === 'personal' ? ASISTENCIA_PATHS.personal : ASISTENCIA_PATHS.registro;
+  const needsPermissionRedirect = location.pathname === '/asistencia'
+    || (currentView === 'personal' && !canViewTeamAttendance)
+    || (currentView === 'registro' && !canViewPersonalAttendance);
   const needsRedirectToKnownRoute = location.pathname !== '/asistencia'
     && location.pathname !== ASISTENCIA_PATHS.registro
     && location.pathname !== ASISTENCIA_PATHS.personal;
@@ -791,7 +801,9 @@ export default function Asistencia() {
     setError(null);
 
     try {
-      const data = await postgresApi.getAsistenciaDashboard(Number(rangeDays));
+      const data = effectiveView === 'personal'
+        ? await postgresApi.getAsistenciaDashboard(Number(rangeDays))
+        : await postgresApi.getAsistenciaPersonal(Number(rangeDays));
       setDashboard(data);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'No se pudo cargar asistencia.';
@@ -800,7 +812,7 @@ export default function Asistencia() {
     } finally {
       setLoading(false);
     }
-  }, [rangeDays]);
+  }, [effectiveView, rangeDays]);
 
   useEffect(() => {
     void loadDashboard();
@@ -1168,11 +1180,11 @@ export default function Asistencia() {
       : 'Sin datos';
 
   if (needsRedirectToKnownRoute) {
-    return <Navigate to={ASISTENCIA_PATHS.registro} replace />;
+    return <Navigate to={redirectPath} replace />;
   }
 
-  if (needsRedirectToRegistro) {
-    return <Navigate to={ASISTENCIA_PATHS.registro} replace />;
+  if (needsPermissionRedirect) {
+    return <Navigate to={redirectPath} replace />;
   }
 
   return (
