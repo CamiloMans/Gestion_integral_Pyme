@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Proyecto } from "@/data/mockData";
-import { formatDateOnly } from "@/lib/date-format";
+import { formatDateOnly, toDateOnly } from "@/lib/date-format";
 import { formatNumericInput, parseNumericInput } from "@/lib/numeric-input";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -59,18 +59,7 @@ function normalizeObservacion(value: string) {
 }
 
 function toDateInputValue(value?: string) {
-  if (!value) return "";
-
-  const normalized = value.trim();
-  if (!normalized) return "";
-
-  const isoDate = normalized.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (isoDate?.[1]) return isoDate[1];
-
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) return "";
-
-  return parsed.toISOString().split("T")[0];
+  return toDateOnly(value);
 }
 
 function formatAmount(value: number, moneda: MonedaProyecto) {

@@ -7,6 +7,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Los usuarios estan en Chile. Sin fijar la zona, un CI en UTC no ve los corrimientos de dia.
+    env: { TZ: "America/Santiago" },
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },

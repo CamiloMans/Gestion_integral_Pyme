@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Proyecto } from "@/data/mockData";
 import { toast } from "@/hooks/use-toast";
-import { formatDateOnly } from "@/lib/date-format";
+import { formatDateOnly, todayDateOnly } from "@/lib/date-format";
 import {
   postgresApi,
   type DocumentoProyectoRecord,
@@ -33,7 +33,7 @@ interface DocumentoFormState {
 const initialForm: DocumentoFormState = {
   proyectoId: "",
   tipoDocumentoProyectoId: "",
-  fechaDocumento: new Date().toISOString().split("T")[0],
+  fechaDocumento: todayDateOnly(),
   nroReferencia: "",
   observacion: "",
   archivo: null,
@@ -195,7 +195,7 @@ export default function ControlPagosDocumentosPg() {
     setForm({
       proyectoId: String(item.proyectoId),
       tipoDocumentoProyectoId: String(item.tipoDocumentoProyectoId),
-      fechaDocumento: item.fechaDocumento || new Date().toISOString().split("T")[0],
+      fechaDocumento: item.fechaDocumento || todayDateOnly(),
       nroReferencia: item.nroReferencia || "",
       observacion: normalizeObservacion(item.observacion || ""),
       archivo: null,

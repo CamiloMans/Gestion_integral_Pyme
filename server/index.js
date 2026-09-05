@@ -27,6 +27,7 @@ import {
   query,
   runWithRequestContext,
 } from './db.js';
+import { APP_TIMEZONE, formatDateInTimeZone } from './time.js';
 import {
   ensureCoreSchema,
   ensureDevSeedData,
@@ -34,6 +35,11 @@ import {
   isDevAuthBypassEnabled,
 } from './local-dev.js';
 import { buildReportesPortafolio } from './reportes.js';
+import {
+  buildEmpresaReferenceUpdates,
+  createEmpresaFusionInputSchema,
+  normalizeEmpresaFusionSelection,
+} from './empresas-fusion.js';
 import { assertCanManageProjectHours, ensureHorasSchema, registerHorasRoutes } from './horas.js';
 import { ALL_PERMISSIONS, PERMISSIONS } from '../shared/access-control.js';
 import {
@@ -62,13 +68,13 @@ const CATEGORY_COLOR_PALETTE = [
   '#FFD6A5',
 ];
 const tableColumnsCache = new Map();
-const APP_TIMEZONE = String(process.env.APP_TIMEZONE || 'America/Santiago').trim() || 'America/Santiago';
 const CONTROL_PAGOS_HITOS_TABLE = 'fct_hito_pago_proyecto';
 const CONTROL_PAGOS_DOCUMENTOS_TABLE = 'fct_documento_proyecto';
 const CONTROL_PAGOS_HITO_DOCUMENTOS_TABLE = 'fct_documento_hito';
 const DOCUMENTOS_TABLE = 'documentos';
 const GASTO_DOCUMENTOS_TABLE = 'fct_gasto_documento';
 const ASISTENCIA_TABLE = 'fct_asistencia_trabajador';
+const FUSION_EMPRESAS_TABLE = 'fct_fusion_empresa';
 const STORAGE_API_URL = String(process.env.STORAGE_API_URL || '').replace(/\/+$/, '');
 const STORAGE_API_SECRET = String(process.env.STORAGE_API_SECRET || '');
 const LOCAL_STORAGE_DIR = String(process.env.LOCAL_STORAGE_DIR || '.storage/documentos').trim() || '.storage/documentos';
@@ -92,6 +98,7 @@ let documentosSchemaPromise = null;
 let gastoDocumentosSchemaPromise = null;
 let asistenciaSchemaPromise = null;
 let proyectoIngresosSchemaPromise = null;
+let fusionEmpresasSchemaPromise = null;
 
 function isValidPort(value) {
   return Number.isInteger(value) && value > 0 && value < 65536;
@@ -179,6 +186,8 @@ const empresaInputSchema = z.object({
   correoElectronico: z.string().optional().nullable(),
   categoria: z.enum(['Empresa', 'Persona Natural']).optional().nullable(),
 });
+
+const empresaFusionInputSchema = createEmpresaFusionInputSchema(empresaInputSchema);
 
 const colaboradorInputSchema = z.object({
   nombre: z.string().trim().min(1),
@@ -360,20 +369,6 @@ function normalizeNumeric(value) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function formatDateInTimeZone(date, timeZone = APP_TIMEZONE) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const year = parts.find((part) => part.type === 'year')?.value || '0000';
-  const month = parts.find((part) => part.type === 'month')?.value || '01';
-  const day = parts.find((part) => part.type === 'day')?.value || '01';
-
-  return `${year}-${month}-${day}`;
 }
 
 function normalizeAuthProviders(value) {
@@ -1600,6 +1595,45 @@ async function ensureGastoDocumentosSchema() {
   });
 
   return gastoDocumentosSchemaPromise;
+}
+
+async function ensureFusionEmpresasSchema() {
+  if (fusionEmpresasSchemaPromise) {
+    return fusionEmpresasSchemaPromise;
+  }
+
+  fusionEmpresasSchemaPromise = (async () => {
+    // Las empresas absorbidas se eliminan de dim_empresa, asi que empresas_absorbidas
+    // guarda su fila completa: es la unica copia que queda de esos datos.
+    await query(`
+      create table if not exists ${FUSION_EMPRESAS_TABLE} (
+        id uuid primary key,
+        tenant_id uuid not null references tenants(id) on delete cascade,
+        empresa_destino_id uuid references dim_empresa(id) on delete set null,
+        empresa_destino_nombre character varying not null,
+        empresa_destino_previa jsonb not null,
+        empresa_destino_final jsonb not null,
+        empresas_absorbidas jsonb not null,
+        total_empresas_absorbidas integer not null default 0,
+        total_gastos_reasignados integer not null default 0,
+        detalle_reasignaciones jsonb not null default '[]'::jsonb,
+        created_by uuid references users(id) on delete set null,
+        created_at timestamp with time zone not null default now()
+      )
+    `);
+
+    await query(`
+      create index if not exists idx_fct_fusion_empresa_tenant_created_at
+      on ${FUSION_EMPRESAS_TABLE} (tenant_id, created_at desc)
+    `);
+
+    tableColumnsCache.delete(FUSION_EMPRESAS_TABLE);
+  })().catch((error) => {
+    fusionEmpresasSchemaPromise = null;
+    throw error;
+  });
+
+  return fusionEmpresasSchemaPromise;
 }
 
 async function ensureAsistenciaSchema() {
@@ -3940,6 +3974,249 @@ app.post('/api/empresas', async (req, res) => {
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Error al crear empresa',
     });
+  }
+});
+
+// Rutas literales registradas antes de /api/empresas/:id para que ninguna ruta con
+// parametro pueda capturarlas.
+app.get('/api/empresas/resumen-gastos', async (_req, res) => {
+  try {
+    const tenant = await getTenant();
+    const result = await query(
+      `
+        select
+          e.id as empresa_id,
+          count(g.id)::int as total_gastos
+        from dim_empresa e
+        left join fct_gasto g
+          on g.empresa_id = e.id
+          and g.tenant_id = e.tenant_id
+        where e.tenant_id = $1
+        group by e.id
+      `,
+      [tenant.id],
+    );
+
+    res.json(result.rows.map((row) => ({
+      empresaId: row.empresa_id,
+      totalGastos: Number(row.total_gastos) || 0,
+    })));
+  } catch (error) {
+    sendErrorResponse(res, error, 'Error al obtener el resumen de gastos por empresa');
+  }
+});
+
+app.post('/api/empresas/fusionar', async (req, res) => {
+  let client = null;
+
+  try {
+    await ensureFusionEmpresasSchema();
+
+    const tenant = await getTenant();
+    const payload = empresaFusionInputSchema.parse(req.body);
+    const { empresaIds, empresaPrincipalId, empresasAbsorbidasIds } = normalizeEmpresaFusionSelection(payload);
+    const activeColumn = await getActiveColumnName('dim_empresa');
+
+    client = await pool.connect();
+
+    try {
+      await client.query('begin');
+
+      // Serializa fusiones simultaneas del mismo tenant: sin esto, dos fusiones
+      // cruzadas (A -> B y B -> A) se bloquean mutuamente.
+      await client.query(
+        "select pg_advisory_xact_lock(hashtext('rekosol-fusion-empresa'), hashtext($1::text))",
+        [tenant.id],
+      );
+
+      // El for update bloquea las filas: un insert en fct_gasto toma un for key share
+      // sobre su empresa padre, asi que un gasto nuevo hacia una empresa absorbida
+      // espera hasta el commit en vez de colarse entre el update y el delete.
+      const seleccionadas = await client.query(
+        `
+          select e.id, to_jsonb(e) as snapshot
+          from dim_empresa e
+          where e.tenant_id = $1
+            and e.id = any($2::uuid[])
+          for update
+        `,
+        [tenant.id, empresaIds],
+      );
+
+      if (seleccionadas.rowCount !== empresaIds.length) {
+        await client.query('rollback');
+        return res.status(404).json({
+          error: 'Una o mas empresas seleccionadas no existen en este tenant.',
+        });
+      }
+
+      const snapshotsPorId = new Map(seleccionadas.rows.map((row) => [row.id, row.snapshot]));
+
+      // El esquema de produccion no vive en el repositorio, asi que descubrimos en
+      // caliente toda columna que apunte a dim_empresa en vez de asumir fct_gasto.
+      const referencias = await client.query(`
+        select
+          con.conrelid::regclass::text as table_ref,
+          quote_ident(att.attname) as column_ref,
+          con.conrelid::regclass::text as table_name,
+          att.attname as column_name,
+          array_length(con.conkey, 1) as key_columns
+        from pg_constraint con
+        join pg_attribute att
+          on att.attrelid = con.conrelid
+          and att.attnum = con.conkey[1]
+        where con.contype = 'f'
+          and con.confrelid = 'dim_empresa'::regclass
+          and not att.attisdropped
+        order by 1, 2
+      `);
+
+      const columnsByTable = new Map();
+      for (const row of referencias.rows) {
+        const tableName = String(row.table_name || '');
+        if (!columnsByTable.has(tableName)) {
+          columnsByTable.set(tableName, await getTableColumns(tableName));
+        }
+      }
+
+      const actualizaciones = buildEmpresaReferenceUpdates(referencias.rows, columnsByTable);
+      const reasignaciones = [];
+      let gastosReasignados = 0;
+
+      for (const actualizacion of actualizaciones) {
+        const params = actualizacion.usaTenant
+          ? [empresaPrincipalId, empresasAbsorbidasIds, tenant.id]
+          : [empresaPrincipalId, empresasAbsorbidasIds];
+        const resultado = await client.query(actualizacion.sql, params);
+
+        if (resultado.rowCount > 0) {
+          reasignaciones.push({
+            tabla: actualizacion.tabla,
+            columna: actualizacion.columna,
+            filas: resultado.rowCount,
+          });
+        }
+
+        if (actualizacion.tabla === 'fct_gasto') {
+          gastosReasignados = resultado.rowCount;
+        }
+      }
+
+      // Mismos normalizadores que PUT /api/empresas/:id: si difieren, la empresa
+      // agrupada queda con otra capitalizacion y el dashboard, que agrupa proveedores
+      // por texto del nombre, la vuelve a partir en dos.
+      const valoresPrincipal = [
+        tenant.id,
+        empresaPrincipalId,
+        normalizeText(payload.empresa.razonSocial, { uppercase: true }),
+        normalizeNullableText(payload.empresa.rut, { uppercase: true }),
+        normalizeNullableText(payload.empresa.numeroContacto),
+        normalizeNullableText(payload.empresa.correoElectronico, { lowercase: true }),
+        normalizeNullableText(payload.empresa.categoria),
+      ];
+
+      // requireDimensionForGasto rechaza guardar un gasto cuya empresa este inactiva,
+      // asi que la empresa resultante siempre queda activa.
+      const activeFragment = activeColumn ? `,\n          ${activeColumn} = true` : '';
+
+      const principalActualizada = await client.query(
+        `
+          update dim_empresa
+          set
+            razon_social = $3,
+            rut = $4,
+            numero_contacto = $5,
+            correo_electronico = $6,
+            categoria = $7${activeFragment},
+            updated_at = now()
+          where tenant_id = $1
+            and id = $2
+          returning *, to_jsonb(dim_empresa.*) as snapshot
+        `,
+        valoresPrincipal,
+      );
+
+      const eliminadas = await client.query(
+        `
+          delete from dim_empresa
+          where tenant_id = $1
+            and id = any($2::uuid[])
+          returning id
+        `,
+        [tenant.id, empresasAbsorbidasIds],
+      );
+
+      if (eliminadas.rowCount !== empresasAbsorbidasIds.length) {
+        throw new Error('No se pudieron eliminar todas las empresas duplicadas.');
+      }
+
+      const fusionId = randomUUID();
+      const empresaFinal = principalActualizada.rows[0];
+
+      await client.query(
+        `
+          insert into ${FUSION_EMPRESAS_TABLE} (
+            id,
+            tenant_id,
+            empresa_destino_id,
+            empresa_destino_nombre,
+            empresa_destino_previa,
+            empresa_destino_final,
+            empresas_absorbidas,
+            total_empresas_absorbidas,
+            total_gastos_reasignados,
+            detalle_reasignaciones,
+            created_by
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `,
+        [
+          fusionId,
+          tenant.id,
+          empresaPrincipalId,
+          empresaFinal.razon_social,
+          JSON.stringify(snapshotsPorId.get(empresaPrincipalId) || {}),
+          JSON.stringify(empresaFinal.snapshot || {}),
+          JSON.stringify(empresasAbsorbidasIds.map((id) => snapshotsPorId.get(id) || { id })),
+          empresasAbsorbidasIds.length,
+          gastosReasignados,
+          JSON.stringify(reasignaciones),
+          req.auth?.user?.id || null,
+        ],
+      );
+
+      await client.query('commit');
+
+      res.json({
+        fusionId,
+        empresa: mapEmpresa(empresaFinal),
+        empresasAbsorbidas: empresasAbsorbidasIds.length,
+        gastosReasignados,
+        reasignaciones,
+      });
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Payload invalido',
+        details: error.flatten(),
+      });
+    }
+
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23503') {
+      return res.status(409).json({
+        error: 'No se pueden eliminar las empresas duplicadas porque aun tienen registros relacionados.',
+      });
+    }
+
+    sendErrorResponse(res, error, 'Error al agrupar empresas');
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 });
 

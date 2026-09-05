@@ -1,3 +1,5 @@
+import { APP_TIMEZONE, formatDateInTimeZone } from './time.js';
+
 const MONTH_LABELS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 function toNumber(value) {
@@ -29,21 +31,6 @@ function dateKey(value) {
 function dateFromKey(value) {
   const parsed = new Date(`${value}T00:00:00Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function dateKeyInTimeZone(value, timeZone) {
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(parsed);
-  const year = parts.find((part) => part.type === 'year')?.value || '0000';
-  const month = parts.find((part) => part.type === 'month')?.value || '01';
-  const day = parts.find((part) => part.type === 'day')?.value || '01';
-  return `${year}-${month}-${day}`;
 }
 
 function isInPeriod(value, year, month) {
@@ -138,13 +125,13 @@ export function buildReportesPortafolio({
   hitos = [],
   filters = {},
   now = new Date(),
-  timeZone = 'America/Santiago',
+  timeZone = APP_TIMEZONE,
 }) {
   const year = String(filters.year || now.getUTCFullYear());
   const month = filters.month || 'all';
   const projectFilter = filters.proyectoId || 'all';
   const incomeFilter = filters.ingresos || 'con_ingresos';
-  const today = dateKeyInTimeZone(now, timeZone);
+  const today = formatDateInTimeZone(now, timeZone);
 
   const availableYears = Array.from(new Set([
     year,

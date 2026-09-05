@@ -42,6 +42,31 @@ describe('Horas', () => {
     expect(screen.getByText('Aún no tienes horas en este período')).toBeInTheDocument();
   });
 
+  it.each([
+    ['una fecha calendario', '2026-09-04'],
+    ['un timestamp UTC del servidor', '2026-09-04T00:00:00.000Z'],
+  ])('muestra el día correcto cuando el servidor manda %s', async (_caso, fecha) => {
+    vi.mocked(postgresApi.getHoras).mockResolvedValue({
+      range: { from: '2026-09-01', to: '2026-09-30' },
+      projects: [{ id: 'p1', nombre: 'Proyecto solar norte', codigoProyecto: 'PS-01' }],
+      entries: [{
+        id: 'e1',
+        proyectoId: 'p1',
+        proyectoNombre: 'Proyecto solar norte',
+        userId: 'u1',
+        userNombre: 'Camilo',
+        userEmail: 'lab@myma.cl',
+        fecha,
+        horas: 4,
+      }],
+    });
+    render(<MemoryRouter initialEntries={['/horas/carga']}><Horas /></MemoryRouter>);
+
+    // La fecha se renderiza dos veces: tabla de escritorio y tarjetas móviles.
+    expect(await screen.findAllByText(/vie 4 de sep/i)).not.toHaveLength(0);
+    expect(screen.queryAllByText(/jue 3 de sep/i)).toHaveLength(0);
+  });
+
   it('redirige a un miembro fuera del dashboard consolidado', async () => {
     render(
       <MemoryRouter initialEntries={['/horas/dashboard']}>

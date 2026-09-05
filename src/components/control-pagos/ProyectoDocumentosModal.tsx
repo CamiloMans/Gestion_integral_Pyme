@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
-import { formatDateOnly } from "@/lib/date-format";
+import { formatDateOnly, toDateOnly, todayDateOnly } from "@/lib/date-format";
 import {
   postgresApi,
   type DocumentoProyectoRecord,
@@ -29,35 +29,36 @@ interface ProyectoDocumentosModalProps {
 }
 
 function todayIsoDate() {
-  return new Date().toISOString().split("T")[0];
+  return todayDateOnly();
 }
 
 function toDateInputValue(value?: string) {
-  if (!value) return todayIsoDate();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return todayIsoDate();
-  return parsed.toISOString().split("T")[0];
+  return toDateOnly(value) || todayIsoDate();
+}
+
+/**
+ * Rechaza fechas imposibles como 2026-02-31 comparando los componentes con los que
+ * el Date realmente construyo. No usa el round-trip por toISOString(), que compara
+ * medianoche local contra UTC y solo se sostiene en zonas UTC-o-detras.
+ */
+function isRealCalendarDate(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
 }
 
 function parseDateToIso(value: string) {
   const trimmed = value.trim();
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    const parsedIso = new Date(`${trimmed}T00:00:00`);
-    if (Number.isNaN(parsedIso.getTime())) return null;
-    if (parsedIso.toISOString().split("T")[0] !== trimmed) return null;
-    return trimmed;
+    return isRealCalendarDate(trimmed) ? trimmed : null;
   }
 
   const match = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!match) return null;
   const [, day, month, year] = match;
   const iso = `${year}-${month}-${day}`;
-  const parsed = new Date(`${iso}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  if (parsed.toISOString().split("T")[0] !== iso) return null;
-  return iso;
+  return isRealCalendarDate(iso) ? iso : null;
 }
 
 function normalizeObservacion(value: string) {

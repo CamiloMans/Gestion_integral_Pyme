@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { toDateOnly } from '@/lib/date-format';
 import type { HoraEntry, HoraEntryInput, HorasProject } from '@/services/postgresApi';
 
 type HoraEntryDialogProps = {
@@ -52,7 +53,7 @@ export function HoraEntryDialog({
   useEffect(() => {
     if (!open) return;
     setProjectId(entry?.proyectoId || projects[0]?.id || '');
-    setDate(entry?.fecha || today);
+    setDate(toDateOnly(entry?.fecha) || today);
     setHours(entry ? String(entry.horas) : '');
     setDetail(entry?.detalle || '');
     setError(null);
@@ -60,7 +61,7 @@ export function HoraEntryDialog({
 
   const existingHoursForDate = useMemo(
     () => entries
-      .filter((item) => item.fecha === date && item.id !== entry?.id)
+      .filter((item) => toDateOnly(item.fecha) === date && item.id !== entry?.id)
       .reduce((sum, item) => sum + item.horas, 0),
     [date, entries, entry?.id],
   );

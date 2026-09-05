@@ -39,6 +39,67 @@ describe('HoraEntryDialog', () => {
     }));
   });
 
+  it('precarga la fecha al editar aunque el servidor mande un timestamp', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <HoraEntryDialog
+        open
+        onOpenChange={vi.fn()}
+        projects={[project]}
+        entries={[]}
+        entry={{
+          id: 'entry-1',
+          proyectoId: project.id,
+          proyectoNombre: project.nombre,
+          userId: 'user-1',
+          userNombre: 'Camilo',
+          userEmail: 'camilo@example.com',
+          fecha: '2026-09-04T00:00:00.000Z',
+          horas: 4,
+        }}
+        today="2026-09-04"
+        onSave={onSave}
+      />,
+    );
+
+    expect(screen.getByLabelText('Fecha')).toHaveValue('2026-09-04');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horas' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ fecha: '2026-09-04', horas: 4 }),
+    ));
+  });
+
+  it('cuenta las horas del día aunque el servidor mande un timestamp', async () => {
+    const onSave = vi.fn();
+    render(
+      <HoraEntryDialog
+        open
+        onOpenChange={vi.fn()}
+        projects={[project]}
+        entries={[{
+          id: 'entry-1',
+          proyectoId: project.id,
+          proyectoNombre: project.nombre,
+          userId: 'user-1',
+          userNombre: 'Camilo',
+          userEmail: 'camilo@example.com',
+          fecha: '2026-09-04T00:00:00.000Z',
+          horas: 23,
+        }]}
+        today="2026-09-04"
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Horas'), { target: { value: '1.25' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horas' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('supera 24 horas');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it('bloquea una carga que completa más de 24 horas diarias', async () => {
     const onSave = vi.fn();
     render(

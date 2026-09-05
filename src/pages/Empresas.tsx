@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { EmpresaModal } from '@/components/EmpresaModal';
+import { EmpresaFusionModal, type EmpresaFusionPayload } from '@/components/EmpresaFusionModal';
 import { ProyectoModal } from '@/components/ProyectoModal';
 import { ColaboradorModal } from '@/components/ColaboradorModal';
 import { CategoriaModal } from '@/components/CategoriaModal';
@@ -11,7 +12,8 @@ import { UserInviteModal } from '@/components/UserInviteModal';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Search, Building2, FolderKanban, Users, Tag, FileText, Pencil, Trash2, FolderTree, UserPlus } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Search, Building2, FolderKanban, Users, Tag, FileText, Pencil, Trash2, FolderTree, UserPlus, Combine } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { useAppAuth } from '@/hooks/useAppAuth';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -121,6 +123,7 @@ export default function Empresas() {
   const currentUserId = session?.user?.id ?? null;
   const canManageUsers = currentRole === 'admin' || currentRole === 'super_admin';
   const canViewUsers = hasPermission(session, PERMISSIONS.SETTINGS_USERS);
+  const canManageEmpresas = hasPermission(session, PERMISSIONS.SETTINGS_COMPANIES);
   const visibleViewOptions = useMemo(
     () => VIEW_OPTIONS.filter((option) => hasPermission(session, option.permission)),
     [session],
@@ -154,27 +157,38 @@ export default function Empresas() {
   const [editingTipoDocumento, setEditingTipoDocumento] = useState<TipoDocumentoOption | undefined>();
   const [editingTipoDocumentoProyecto, setEditingTipoDocumentoProyecto] = useState<TipoDocumentoProyectoOption | undefined>();
   const [editingUsuario, setEditingUsuario] = useState<TenantUser | null>(null);
+  const [selectedEmpresaIds, setSelectedEmpresaIds] = useState<Set<string>>(new Set());
+  const [fusionModalOpen, setFusionModalOpen] = useState(false);
+  const [gastosPorEmpresa, setGastosPorEmpresa] = useState<Record<string, number>>({});
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const [nextConfigData, nextTenantUsers] = await Promise.all([
+      const [nextConfigData, nextTenantUsers, nextResumenGastos] = await Promise.all([
         postgresApi.getConfiguracion(),
         canViewUsers ? postgresApi.getUsuarios() : Promise.resolve([]),
+        // Degrada a "sin conteos" en vez de romper la pagina si el servidor es viejo.
+        canManageEmpresas
+          ? postgresApi.getEmpresasResumenGastos().catch(() => [])
+          : Promise.resolve([]),
       ]);
       setConfigData(nextConfigData);
       setTenantUsers(nextTenantUsers);
+      setGastosPorEmpresa(Object.fromEntries(
+        nextResumenGastos.map((item) => [item.empresaId, Number(item.totalGastos) || 0]),
+      ));
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'No se pudo cargar la configuracion';
       setError(message);
       setConfigData(null);
       setTenantUsers([]);
+      setGastosPorEmpresa({});
     } finally {
       setLoading(false);
     }
-  }, [canViewUsers]);
+  }, [canManageEmpresas, canViewUsers]);
 
   useEffect(() => {
     if (!visibleViewOptions.some((option) => option.key === vista) && visibleViewOptions[0]) {
@@ -185,6 +199,11 @@ export default function Empresas() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Evita que quede seleccionada una fila que ya no esta a la vista.
+  useEffect(() => {
+    setSelectedEmpresaIds(new Set());
+  }, [vista, searchTerm]);
 
   useEffect(() => {
     if (!error) return;
@@ -216,6 +235,29 @@ export default function Empresas() {
       (item.categoria || '').toLowerCase().includes(term),
     );
   }, [empresas, searchTerm]);
+
+  const selectedEmpresas = useMemo(
+    () => filteredEmpresas.filter((item) => selectedEmpresaIds.has(item.id)),
+    [filteredEmpresas, selectedEmpresaIds],
+  );
+  const allEmpresasChecked = filteredEmpresas.length > 0
+    && filteredEmpresas.every((item) => selectedEmpresaIds.has(item.id));
+  const someEmpresasChecked = filteredEmpresas.some((item) => selectedEmpresaIds.has(item.id));
+  const empresasHeaderCheckedState = someEmpresasChecked && !allEmpresasChecked
+    ? 'indeterminate'
+    : allEmpresasChecked;
+
+  const toggleEmpresaSeleccionada = (empresaId: string, checked: boolean) => {
+    setSelectedEmpresaIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(empresaId);
+      } else {
+        next.delete(empresaId);
+      }
+      return next;
+    });
+  };
 
   const filteredProyectos = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -354,6 +396,22 @@ export default function Empresas() {
       await loadData();
     } catch (mutationError) {
       handleMutationError('Error al guardar la empresa', mutationError);
+    }
+  };
+
+  const handleFusionarEmpresas = async (payload: EmpresaFusionPayload) => {
+    try {
+      const resultado = await postgresApi.fusionarEmpresas(payload);
+      toast({
+        title: 'Empresas agrupadas',
+        description: `Se agruparon ${payload.empresaIds.length} empresas en "${resultado.empresa.razonSocial}" y se reasignaron ${resultado.gastosReasignados} gastos.`,
+        variant: 'success',
+      });
+      setFusionModalOpen(false);
+      setSelectedEmpresaIds(new Set());
+      await loadData();
+    } catch (mutationError) {
+      handleMutationError('Error al agrupar las empresas', mutationError);
     }
   };
 
@@ -565,7 +623,7 @@ export default function Empresas() {
       if (filteredEmpresas.length === 0) {
         return (
           <TableRow>
-            <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+            <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
               {error ? 'No se pudo cargar empresas desde PostgreSQL' : 'No hay empresas para mostrar'}
             </TableCell>
           </TableRow>
@@ -574,6 +632,13 @@ export default function Empresas() {
 
       return filteredEmpresas.map((item) => (
         <TableRow key={item.id}>
+          <TableCell className="w-[44px]">
+            <Checkbox
+              checked={selectedEmpresaIds.has(item.id)}
+              onCheckedChange={(checked) => toggleEmpresaSeleccionada(item.id, Boolean(checked))}
+              aria-label={`Seleccionar ${item.razonSocial}`}
+            />
+          </TableCell>
           <TableCell><div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted"><Building2 size={18} className="text-muted-foreground" /></div><div><p className="font-medium">{item.razonSocial}</p><p className="text-sm text-muted-foreground">{item.categoria || '-'}</p></div></div></TableCell>
           <TableCell className="font-mono">{item.rut || '-'}</TableCell>
           <TableCell>{item.numeroContacto || '-'}</TableCell>
@@ -731,11 +796,34 @@ export default function Empresas() {
           </div>
         </div>
 
+        {vista === 'empresas' && selectedEmpresaIds.size > 0 && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3">
+            <span className="text-sm text-muted-foreground">
+              {selectedEmpresaIds.size} empresa(s) seleccionada(s)
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="ghost" onClick={() => setSelectedEmpresaIds(new Set())}>
+                Limpiar seleccion
+              </Button>
+              <Button
+                type="button"
+                className="gap-2"
+                disabled={selectedEmpresaIds.size < 2}
+                title={selectedEmpresaIds.size < 2 ? 'Selecciona al menos dos empresas' : undefined}
+                onClick={() => setFusionModalOpen(true)}
+              >
+                <Combine size={16} />
+                Agrupar {selectedEmpresaIds.size} empresas
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                {vista === 'empresas' && (<><TableHead className="font-semibold">EMPRESA</TableHead><TableHead className="font-semibold">RUT</TableHead><TableHead className="font-semibold">CONTACTO</TableHead><TableHead className="font-semibold">CREADA</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
+                {vista === 'empresas' && (<><TableHead className="w-[44px]"><Checkbox checked={empresasHeaderCheckedState} disabled={filteredEmpresas.length === 0} onCheckedChange={(checked) => setSelectedEmpresaIds(checked ? new Set(filteredEmpresas.map((item) => item.id)) : new Set())} aria-label="Seleccionar todas las empresas" /></TableHead><TableHead className="font-semibold">EMPRESA</TableHead><TableHead className="font-semibold">RUT</TableHead><TableHead className="font-semibold">CONTACTO</TableHead><TableHead className="font-semibold">CREADA</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'proyectos' && (<><TableHead className="font-semibold">PROYECTO</TableHead><TableHead className="font-semibold">MONEDA</TableHead><TableHead className="font-semibold">MONTO TOTAL</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'colaboradores' && (<><TableHead className="font-semibold">COLABORADOR</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">TELEFONO</TableHead><TableHead className="font-semibold">CARGO</TableHead><TableHead className="font-semibold">CREADO</TableHead><TableHead className="text-center font-semibold">ACCIONES</TableHead></>)}
                 {vista === 'usuarios' && (<><TableHead className="font-semibold">USUARIO</TableHead><TableHead className="font-semibold">EMAIL</TableHead><TableHead className="font-semibold">ROL</TableHead><TableHead className="font-semibold">ACCESOS</TableHead><TableHead className="font-semibold">INVITACION</TableHead><TableHead className="font-semibold">ESTADO</TableHead><TableHead className="font-semibold">ALTA</TableHead>{canManageUsers && <TableHead className="text-center font-semibold">ACCIONES</TableHead>}</>)}
@@ -750,6 +838,15 @@ export default function Empresas() {
       </div>
 
       {vista === 'empresas' && <EmpresaModal open={modalOpen} onClose={closeModal} onSave={handleSaveEmpresa} empresa={editingEmpresa} />}
+      {vista === 'empresas' && (
+        <EmpresaFusionModal
+          open={fusionModalOpen}
+          onClose={() => setFusionModalOpen(false)}
+          onSave={handleFusionarEmpresas}
+          empresas={selectedEmpresas}
+          gastosPorEmpresa={gastosPorEmpresa}
+        />
+      )}
       {vista === 'proyectos' && <ProyectoModal open={modalOpen} onClose={closeModal} onSave={handleSaveProyecto} proyecto={editingProyecto} />}
       {vista === 'colaboradores' && <ColaboradorModal open={modalOpen} onClose={closeModal} onSave={handleSaveColaborador} colaborador={editingColaborador} />}
       {vista === 'usuarios' && <UserInviteModal open={modalOpen} onClose={closeModal} onSave={handleSaveUsuario} editingUser={editingUsuario} />}

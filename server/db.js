@@ -5,6 +5,15 @@ import pg from 'pg';
 const { Pool } = pg;
 const requestContextStorage = new AsyncLocalStorage();
 
+// Las columnas `date` (OID 1082) representan un dia calendario, no un instante.
+// El parser por defecto de pg-types las convierte con `new Date(y, m-1, d)` en la zona
+// horaria del proceso; al serializarlas a JSON (`toISOString()`) el resultado se corre
+// un dia cuando el servidor corre en UTC y el navegador esta en Chile.
+// Devolvemos el texto crudo 'YYYY-MM-DD', que es el contrato que espera el frontend.
+// No aplica a `timestamptz` (1184) ni `timestamp` (1114): esos SI son instantes y deben
+// seguir llegando como Date. Tampoco cubre `date[]` (1182), que hoy no existe en el esquema.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
+
 function createSslConfig() {
   if (process.env.PGSSLMODE !== 'require') {
     return false;

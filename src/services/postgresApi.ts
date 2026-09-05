@@ -202,6 +202,27 @@ type HorasDashboardResponse = {
   summary: { totalHours: number; people: number; projects: number; records: number };
 };
 type EmpresaCreateInput = Omit<Empresa, 'id' | 'createdAt'>;
+type EmpresaGastosResumen = {
+  empresaId: string;
+  totalGastos: number;
+};
+type EmpresaFusionInput = {
+  empresaIds: string[];
+  empresaPrincipalId: string;
+  empresa: EmpresaCreateInput;
+};
+type EmpresaFusionReasignacion = {
+  tabla: string;
+  columna: string;
+  filas: number;
+};
+type EmpresaFusionResult = {
+  fusionId: string;
+  empresa: Empresa;
+  empresasAbsorbidas: number;
+  gastosReasignados: number;
+  reasignaciones: EmpresaFusionReasignacion[];
+};
 type ColaboradorCreateInput = Omit<Colaborador, 'id' | 'createdAt'>;
 type CategoriaCreateInput = Omit<CategoriaOption, 'id'>;
 type TipoDocumentoCreateInput = Omit<TipoDocumentoOption, 'id' | 'createdAt'>;
@@ -693,6 +714,17 @@ export const postgresApi = {
     });
   },
 
+  getEmpresasResumenGastos() {
+    return request<EmpresaGastosResumen[]>('/api/empresas/resumen-gastos');
+  },
+
+  fusionarEmpresas(input: EmpresaFusionInput) {
+    return request<EmpresaFusionResult>('/api/empresas/fusionar', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
   createColaborador(colaborador: ColaboradorCreateInput) {
     return request<Colaborador>('/api/colaboradores', {
       method: 'POST',
@@ -861,6 +893,10 @@ export type {
   DocumentoProyectoRecord,
   DocumentoProyectoRecordCreateInput,
   EmpresaCreateInput,
+  EmpresaFusionInput,
+  EmpresaFusionReasignacion,
+  EmpresaFusionResult,
+  EmpresaGastosResumen,
   HitoPagoProyecto,
   HitoPagoProyectoCreateInput,
   HoraEntry,

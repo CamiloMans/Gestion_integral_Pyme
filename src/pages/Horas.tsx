@@ -38,6 +38,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAppAuth } from '@/hooks/useAppAuth';
 import { getDefaultRoute, hasPermission, PERMISSIONS } from '@/lib/access-control';
 import { toast } from '@/hooks/use-toast';
+import { parseDateOnly, toDateOnly } from '@/lib/date-format';
 import { cn } from '@/lib/utils';
 import {
   postgresApi,
@@ -62,7 +63,8 @@ function currentMonthRange(): DateRange {
 }
 
 function formatDate(value: string) {
-  return format(parseISO(value), "EEE d 'de' MMM", { locale: es });
+  const parsed = parseDateOnly(value);
+  return parsed ? format(parsed, "EEE d 'de' MMM", { locale: es }) : '-';
 }
 
 function formatHours(value: number) {
@@ -270,7 +272,7 @@ function PersonalHoursView() {
   const entries = data?.entries || [];
   const projects = data?.projects || [];
   const totalHours = entries.reduce((sum, entry) => sum + entry.horas, 0);
-  const workedDays = new Set(entries.map((entry) => entry.fecha)).size;
+  const workedDays = new Set(entries.map((entry) => toDateOnly(entry.fecha))).size;
   const enabledProjects = useMemo(() => new Set(projects.map((project) => project.id)), [projects]);
 
   async function saveEntry(payload: HoraEntryInput) {
@@ -433,9 +435,14 @@ function DashboardHoursView() {
   }, [data?.entries]);
   const dailyChart = useMemo(() => {
     const totals = new Map<string, number>();
-    (data?.entries || []).forEach((entry) => totals.set(entry.fecha, (totals.get(entry.fecha) || 0) + entry.horas));
-    return Array.from(totals, ([date, hours]) => ({ date, label: format(parseISO(date), 'd MMM', { locale: es }), hours }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    (data?.entries || []).forEach((entry) => {
+      const key = toDateOnly(entry.fecha);
+      if (key) totals.set(key, (totals.get(key) || 0) + entry.horas);
+    });
+    return Array.from(totals, ([date, hours]) => {
+      const parsed = parseDateOnly(date);
+      return { date, label: parsed ? format(parsed, 'd MMM', { locale: es }) : date, hours };
+    }).sort((a, b) => a.date.localeCompare(b.date));
   }, [data?.entries]);
   const summary = data?.summary || { totalHours: 0, people: 0, projects: 0, records: 0 };
 

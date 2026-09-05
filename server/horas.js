@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getTenant, pool, query } from './db.js';
+import { todayInAppTimeZone } from './time.js';
 
 const HORAS_TABLE = 'fct_hora_proyecto';
 let horasSchemaPromise = null;
@@ -35,19 +36,7 @@ function normalizeRole(role) {
   return String(role || '').trim().toLowerCase();
 }
 
-function currentDateInAppTimeZone() {
-  const timeZone = String(process.env.APP_TIMEZONE || 'America/Santiago').trim() || 'America/Santiago';
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}`;
-}
-
-export function assertHoraDateIsNotFuture(fecha, today = currentDateInAppTimeZone()) {
+export function assertHoraDateIsNotFuture(fecha, today = todayInAppTimeZone()) {
   if (fecha > today) {
     const error = new Error('No puedes cargar horas en una fecha futura.');
     error.statusCode = 400;

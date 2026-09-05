@@ -22,6 +22,7 @@ import {
   resolveEmpresaMatch as resolveExtractedEmpresaMatch,
   resolveTipoDocumentoId as resolveExtractedTipoDocumentoId,
 } from '@/lib/gasto-document';
+import { toDateOnly, todayDateOnly } from '@/lib/date-format';
 
 type CategoriaOption = {
   id: string;
@@ -76,7 +77,7 @@ export function GastoModal({
   allowCreateEmpresa = true,
   allowCreateCategoria = true,
 }: GastoModalProps) {
-  const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0]);
+  const [fecha, setFecha] = useState(todayDateOnly());
   const [categoria, setCategoria] = useState('');
   const [tipoDocumento, setTipoDocumento] = useState('');
   const [numeroDocumento, setNumeroDocumento] = useState('');
@@ -232,22 +233,7 @@ export function GastoModal({
     }
 
     if (gasto) {
-      let fechaFormateada = '';
-
-      if (gasto.fecha) {
-        try {
-          const fechaGasto = new Date(gasto.fecha);
-          if (!Number.isNaN(fechaGasto.getTime())) {
-            fechaFormateada = fechaGasto.toISOString().split('T')[0];
-          } else {
-            fechaFormateada = gasto.fecha.split('T')[0];
-          }
-        } catch {
-          fechaFormateada = gasto.fecha.split('T')[0];
-        }
-      }
-
-      setFecha(fechaFormateada || new Date().toISOString().split('T')[0]);
+      setFecha(toDateOnly(gasto.fecha) || todayDateOnly());
 
       const categoriaEncontrada = categoriasOrdenadas.find((item) => String(item.id) === String(gasto.categoria));
       setCategoria(categoriaEncontrada ? String(categoriaEncontrada.id) : String(gasto.categoria || ''));
@@ -270,7 +256,7 @@ export function GastoModal({
       setArchivosAdjuntos(gasto.archivosAdjuntos ? [...gasto.archivosAdjuntos] : []);
       setEmpresaMatchInfo(null);
     } else {
-      setFecha(new Date().toISOString().split('T')[0]);
+      setFecha(todayDateOnly());
       setCategoria('');
       setTipoDocumento('');
       setNumeroDocumento('');

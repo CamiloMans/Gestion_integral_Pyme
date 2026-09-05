@@ -6,6 +6,12 @@ services:
     buildCommand: npm install && npm run build
     startCommand: npm run server
     pullRequestPreviewsEnabled: true
+    envVars:
+      # Zona horaria de negocio. NO definir TZ: el contenedor debe seguir en UTC
+      # para que los timestamptz se manejen como instantes; las fechas calendario
+      # se resuelven explicitamente con esta variable.
+      - key: APP_TIMEZONE
+        value: America/Santiago
     headers:
       - path: /*
         name: X-Robots-Tag

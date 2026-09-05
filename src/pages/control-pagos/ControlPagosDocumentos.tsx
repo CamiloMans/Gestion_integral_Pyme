@@ -18,7 +18,7 @@ import {
 } from "@/hooks/useSharePoint";
 import type { DocumentoProyecto } from "@/services/sharepointService";
 import { toast } from "@/hooks/use-toast";
-import { formatDateOnly } from "@/lib/date-format";
+import { formatDateOnly, todayDateOnly } from "@/lib/date-format";
 import { FileText, Paperclip, Pencil, Search, Trash2 } from "lucide-react";
 
 interface DocumentoFormState {
@@ -33,7 +33,7 @@ interface DocumentoFormState {
 const initialForm: DocumentoFormState = {
   proyectoId: "",
   tipoDocumentoProyectoId: "",
-  fechaDocumento: new Date().toISOString().split("T")[0],
+  fechaDocumento: todayDateOnly(),
   nroReferencia: "",
   observacion: "",
   archivo: null,
@@ -140,7 +140,7 @@ export default function ControlPagosDocumentos() {
     setForm({
       proyectoId: String(item.proyectoId),
       tipoDocumentoProyectoId: String(item.tipoDocumentoProyectoId),
-      fechaDocumento: item.fechaDocumento || new Date().toISOString().split("T")[0],
+      fechaDocumento: item.fechaDocumento || todayDateOnly(),
       nroReferencia: item.nroReferencia || "",
       observacion: normalizeObservacion(item.observacion || ""),
       archivo: null,
