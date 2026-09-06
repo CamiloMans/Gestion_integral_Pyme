@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { EmpresaModal } from '@/components/EmpresaModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DateInput } from '@/components/ui/date-input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -594,7 +595,7 @@ export default function GastosCargaMasiva() {
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell><Input type="date" value={row.draft.fecha} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'fecha', e.target.value)} /></TableCell>
+                    <TableCell><DateInput value={row.draft.fecha} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'fecha', e.target.value)} className="h-9 text-sm" containerClassName="min-w-[9.5rem]" /></TableCell>
                     <TableCell>
                       <select className="h-10 w-full rounded-md border bg-background px-2 text-sm" value={row.draft.categoria} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'categoria', e.target.value)}>
                         <option value="">Seleccionar</option>

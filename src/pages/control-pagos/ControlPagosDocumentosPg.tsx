@@ -6,6 +6,7 @@ import { DocumentoViewer } from "@/components/DocumentoViewer";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -474,13 +475,10 @@ export default function ControlPagosDocumentosPg() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="fechaDocumento">Fecha Documento *</Label>
-                <Input
+                <DateInput
                   id="fechaDocumento"
-                  type="date"
                   value={form.fechaDocumento}
                   onChange={(e) => setForm((prev) => ({ ...prev, fechaDocumento: e.target.value }))}
-                  onClick={(e) => e.currentTarget.showPicker?.()}
-                  onFocus={(e) => e.currentTarget.showPicker?.()}
                   required
                 />
               </div>

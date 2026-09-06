@@ -3,6 +3,7 @@ import { Clock3, Loader2, Save } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DateInput } from '@/components/ui/date-input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -143,7 +144,7 @@ export function HoraEntryDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="hora-date">Fecha</Label>
-              <Input id="hora-date" type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} />
+              <DateInput id="hora-date" max={today} value={date} onChange={(event) => setDate(event.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="hora-amount">Horas</Label>

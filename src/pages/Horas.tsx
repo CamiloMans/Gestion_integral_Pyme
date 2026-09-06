@@ -32,6 +32,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DateInput } from '@/components/ui/date-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -90,9 +91,8 @@ function RangeFilter({
     <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
       <div className="space-y-1.5">
         <label htmlFor="hours-from" className="text-xs font-medium text-muted-foreground">Desde</label>
-        <Input
+        <DateInput
           id="hours-from"
-          type="date"
           max={today}
           value={draft.from}
           onChange={(event) => onDraftChange({ ...draft, from: event.target.value })}
@@ -100,9 +100,8 @@ function RangeFilter({
       </div>
       <div className="space-y-1.5">
         <label htmlFor="hours-to" className="text-xs font-medium text-muted-foreground">Hasta</label>
-        <Input
+        <DateInput
           id="hours-to"
-          type="date"
           max={today}
           value={draft.to}
           onChange={(event) => onDraftChange({ ...draft, to: event.target.value })}

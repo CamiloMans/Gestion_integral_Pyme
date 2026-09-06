@@ -263,7 +263,9 @@ const gastoPorPagarInputSchema = gastoInputSchema.extend({
   fechaCompromiso: requiredTrimmedString('Fecha compromiso', 'Fecha compromiso es obligatoria.').pipe(
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha compromiso debe tener formato YYYY-MM-DD.'),
   ),
-  fechaPago: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha pago debe tener formato YYYY-MM-DD.').optional().nullable(),
+  fechaPago: requiredTrimmedString('Fecha pago', 'Fecha pago es obligatoria.').pipe(
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha pago debe tener formato YYYY-MM-DD.'),
+  ),
   facturado: z.boolean().optional().default(true),
   pagado: z.boolean().optional().default(false),
 });
@@ -707,6 +709,37 @@ function normalizeRut(value) {
   return `${cleaned.slice(0, -1)}-${cleaned.slice(-1)}`;
 }
 
+function normalizeExtractedDate(value) {
+  const normalized = normalizeExtractedText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const isoMatch = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  // Formato chileno: DD/MM/YYYY o DD-MM-YYYY.
+  const localMatch = normalized.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (localMatch) {
+    const [, day, month, year] = localMatch;
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  return normalized;
+}
+
+function normalizePlazoPagoDias(value) {
+  const parsed = normalizeExtractedNumber(value);
+  if (parsed === null || parsed <= 0 || parsed > 365) {
+    return null;
+  }
+
+  return parsed;
+}
+
 function normalizeDocumentType(value) {
   const normalized = normalizeExtractedText(value, { uppercase: true });
   if (!normalized) {
@@ -726,8 +759,17 @@ function normalizeExtractionPayload(rawPayload, metadata) {
     : [];
   const confidence = Number(rawPayload?.confidence);
 
+  const montoNeto = normalizeExtractedNumber(rawPayload?.montoNeto);
+  const iva = normalizeExtractedNumber(rawPayload?.iva);
+  const tieneIva = typeof rawPayload?.tieneIva === 'boolean'
+    ? rawPayload.tieneIva
+    : Boolean(iva && iva > 0);
+
   return {
-    fecha: normalizeExtractedText(rawPayload?.fecha),
+    fecha: normalizeExtractedDate(rawPayload?.fecha),
+    fechaVencimiento: normalizeExtractedDate(rawPayload?.fechaVencimiento),
+    plazoPagoDias: normalizePlazoPagoDias(rawPayload?.plazoPagoDias),
+    tieneIva,
     tipoDocumento: normalizeDocumentType(rawPayload?.tipoDocumento),
     numeroDocumento: normalizeExtractedText(rawPayload?.numeroDocumento),
     empresaNombre: normalizeExtractedText(rawPayload?.empresaNombre, { uppercase: true }),
@@ -736,8 +778,8 @@ function normalizeExtractionPayload(rawPayload, metadata) {
     emisorRut: normalizeRut(rawPayload?.emisorRut),
     receptorNombre: normalizeExtractedText(rawPayload?.receptorNombre, { uppercase: true }),
     receptorRut: normalizeRut(rawPayload?.receptorRut),
-    montoNeto: normalizeExtractedNumber(rawPayload?.montoNeto),
-    iva: normalizeExtractedNumber(rawPayload?.iva),
+    montoNeto,
+    iva,
     montoTotal: normalizeExtractedNumber(rawPayload?.montoTotal),
     detalle: normalizeExtractedText(rawPayload?.detalle, { uppercase: true }),
     confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
@@ -758,6 +800,9 @@ function getExpenseExtractionJsonSchema() {
     additionalProperties: false,
     required: [
       'fecha',
+      'fechaVencimiento',
+      'plazoPagoDias',
+      'tieneIva',
       'tipoDocumento',
       'numeroDocumento',
       'empresaNombre',
@@ -774,7 +819,19 @@ function getExpenseExtractionJsonSchema() {
       'warnings',
     ],
     properties: {
-      fecha: { type: ['string', 'null'], description: 'Fecha del documento en formato YYYY-MM-DD.' },
+      fecha: { type: ['string', 'null'], description: 'Fecha de emision del documento en formato YYYY-MM-DD.' },
+      fechaVencimiento: {
+        type: ['string', 'null'],
+        description: 'Fecha de vencimiento o fecha de pago del documento en formato YYYY-MM-DD. Null si no aparece.',
+      },
+      plazoPagoDias: {
+        type: ['number', 'null'],
+        description: 'Dias de plazo de pago declarados en el documento (ej: "30 dias"). Null si no aparece.',
+      },
+      tieneIva: {
+        type: 'boolean',
+        description: 'true si el documento desglosa o incluye IVA, false si es exento/sin IVA.',
+      },
       tipoDocumento: {
         type: 'string',
         enum: ['FACTURA', 'BOLETA', 'BOLETA DE HONORARIO', 'FACTURA EXENTA', 'OTRO'],
@@ -832,6 +889,10 @@ function buildOpenAiExtractionInput(file, mimeType) {
     'Montos en CLP como numeros enteros sin puntos ni signo peso.',
     'Si hay factura con subtotal neto, IVA y total, extrae esos tres.',
     'Si es boleta/comprobante sin IVA visible, deja montoNeto e iva null y usa montoTotal.',
+    'tieneIva true solo si el documento desglosa o incluye IVA; false en exentas, honorarios sin IVA o comprobantes sin IVA.',
+    'fecha es la fecha de emision del documento.',
+    'fechaVencimiento es la fecha de vencimiento o fecha de pago indicada (vence, pagar antes de, fecha de pago); null si no aparece.',
+    'plazoPagoDias son los dias de credito declarados (ej: "pago a 30 dias", "credito 60 dias"); null si no aparece.',
     'Si el documento es comprobante bancario, tipoDocumento OTRO salvo que muestre factura/boleta.',
     'No inventes datos no visibles.',
   ].join('\n');
@@ -1578,6 +1639,14 @@ async function ensureGastoPorPagarSchema() {
     await query(`
       create index if not exists idx_fct_gasto_tenant_por_pagar
       on fct_gasto (tenant_id, fecha_compromiso)
+      where origen = 'COMPROMISO' and pagado = false
+    `);
+
+    // fecha_pago es el vencimiento mientras el compromiso sigue impago,
+    // y es la columna por la que se ordena y se alerta.
+    await query(`
+      create index if not exists idx_fct_gasto_tenant_fecha_pago
+      on fct_gasto (tenant_id, fecha_pago)
       where origen = 'COMPROMISO' and pagado = false
     `);
   })().catch((error) => {
@@ -2449,7 +2518,7 @@ async function fetchGastosPorPagar(tenantId) {
         and g.origen = 'COMPROMISO'
         and g.pagado = false
       group by g.id, c.nombre, uc.nombre, uu.nombre
-      order by g.fecha_compromiso asc nulls last, g.created_at desc
+      order by coalesce(g.fecha_pago, g.fecha_compromiso) asc nulls last, g.created_at desc
     `,
     [tenantId],
   );
@@ -2846,6 +2915,7 @@ async function fetchReportesData(tenantId) {
           g.id,
           g.fecha,
           g.fecha_compromiso,
+          g.fecha_pago,
           g.monto_total,
           g.proyecto_id,
           g.categoria_id,
@@ -2908,6 +2978,7 @@ async function fetchReportesData(tenantId) {
       id: row.id,
       fecha: row.fecha,
       fechaCompromiso: row.fecha_compromiso,
+      fechaPago: row.fecha_pago,
       montoTotal: normalizeNumeric(row.monto_total) ?? 0,
       proyectoId: row.proyecto_id || null,
       categoriaId: row.categoria_id || null,
@@ -5494,8 +5565,8 @@ app.post('/api/gastos/por-pagar', maybeHandleMultipartUploads, async (req, res) 
       }));
     }
 
-    const fechaPago = payload.fechaPago
-      || (payload.pagado ? new Date().toISOString().slice(0, 10) : null);
+    // fechaPago es obligatoria en gastoPorPagarInputSchema: es la fecha de vencimiento.
+    const fechaPago = payload.fechaPago;
 
     const client = await pool.connect();
 
@@ -5607,8 +5678,8 @@ app.put('/api/gastos/por-pagar/:id', maybeHandleMultipartUploads, async (req, re
       }));
     }
 
-    const fechaPago = payload.fechaPago
-      || (payload.pagado ? new Date().toISOString().slice(0, 10) : null);
+    // fechaPago es obligatoria en gastoPorPagarInputSchema: es la fecha de vencimiento.
+    const fechaPago = payload.fechaPago;
 
     const client = await pool.connect();
     let removedDocumentRows = [];

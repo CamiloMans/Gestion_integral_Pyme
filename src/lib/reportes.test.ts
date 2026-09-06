@@ -137,25 +137,32 @@ describe('buildReportesPortafolio', () => {
         { id: 'gasto-1', fecha: '2026-01-10', montoTotal: 400, proyectoId: 'project-1', categoriaNombre: 'Materiales', empresaNombre: 'Proveedor Uno' },
       ],
       gastosPorPagar: [
-        { id: 'pp-vencido', fechaCompromiso: '2026-02-05', montoTotal: 500, proyectoId: 'project-1', categoriaNombre: 'Arriendo', empresaNombre: 'Proveedor Atrasado', facturado: true },
-        { id: 'pp-hoy', fechaCompromiso: '2026-02-10', montoTotal: 100, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Hoy', facturado: true },
-        { id: 'pp-3-dias', fechaCompromiso: '2026-02-13', montoTotal: 200, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Pronto', facturado: false },
-        { id: 'pp-7-dias', fechaCompromiso: '2026-02-17', montoTotal: 300, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Borde', facturado: true },
-        { id: 'pp-8-dias', fechaCompromiso: '2026-02-18', montoTotal: 400, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Futuro', facturado: true },
-        { id: 'pp-otro-anio', fechaCompromiso: '2027-02-13', montoTotal: 900, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor 2027', facturado: true },
-        { id: 'pp-sin-proyecto', fechaCompromiso: '2026-02-13', montoTotal: 700, proyectoId: null, categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Suelto', facturado: true },
-        { id: 'pp-sin-ingresos', fechaCompromiso: '2026-02-13', montoTotal: 800, proyectoId: 'project-3', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Sin Ingresos', facturado: true },
+        // Todas llevan fechaCompromiso en el pasado a proposito: es la fecha del
+        // documento y NO debe decidir nada. El bucket lo define fechaPago, asi que
+        // si alguien vuelve a leer fechaCompromiso estos casos se caen.
+        { id: 'pp-vencido', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-05', montoTotal: 500, proyectoId: 'project-1', categoriaNombre: 'Arriendo', empresaNombre: 'Proveedor Atrasado', facturado: true },
+        { id: 'pp-hoy', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-10', montoTotal: 100, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Hoy', facturado: true },
+        { id: 'pp-3-dias', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-13', montoTotal: 200, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Pronto', facturado: false },
+        { id: 'pp-7-dias', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-17', montoTotal: 300, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Borde', facturado: true },
+        { id: 'pp-8-dias', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-18', montoTotal: 400, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Futuro', facturado: true },
+        // Vence fuera del periodo aunque su documento sea de 2026: debe quedar fuera.
+        { id: 'pp-otro-anio', fechaCompromiso: '2026-01-15', fechaPago: '2027-02-13', montoTotal: 900, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor 2027', facturado: true },
+        { id: 'pp-sin-proyecto', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-13', montoTotal: 700, proyectoId: null, categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Suelto', facturado: true },
+        { id: 'pp-sin-ingresos', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-13', montoTotal: 800, proyectoId: 'project-3', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Sin Ingresos', facturado: true },
+        // Fila anterior a que fechaPago fuera obligatoria: cae en fechaCompromiso.
+        { id: 'pp-legacy', fechaCompromiso: '2026-02-14', montoTotal: 250, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Legacy', facturado: true },
       ],
       filters: { year: '2026', month: 'all', ingresos: 'con_ingresos', proyectoId: 'all' },
       now: new Date('2026-02-10T12:00:00Z'),
     });
 
     expect(report.summary.historicalExpensesClp).toBe(400);
-    expect(report.summary.payablesCount).toBe(7);
-    expect(report.summary.payablesClp).toBe(3000);
+    expect(report.summary.payablesCount).toBe(8);
+    expect(report.summary.payablesClp).toBe(3250);
 
     expect(report.alerts.overduePayables.count).toBe(1);
     expect(report.alerts.overduePayables.amountClp).toBe(500);
+    // date sale de fechaPago (2026-02-05), no de fechaCompromiso (2026-01-15).
     expect(report.alerts.overduePayables.items[0]).toEqual(expect.objectContaining({
       id: 'pp-vencido',
       projectName: 'Proyecto Uno',
@@ -164,27 +171,28 @@ describe('buildReportesPortafolio', () => {
       daysUntil: -5,
     }));
 
-    expect(report.alerts.payables.count).toBe(6);
-    expect(report.alerts.payables.amountClp).toBe(2500);
-    expect(report.alerts.payables.dueSoonCount).toBe(5);
-    expect(report.alerts.payables.dueSoonAmountClp).toBe(2100);
+    expect(report.alerts.payables.count).toBe(7);
+    expect(report.alerts.payables.amountClp).toBe(2750);
+    expect(report.alerts.payables.dueSoonCount).toBe(6);
+    expect(report.alerts.payables.dueSoonAmountClp).toBe(2350);
     expect(report.alerts.payables.items.map((payable) => payable.id)).toEqual([
       'pp-hoy',
       'pp-sin-ingresos',
       'pp-sin-proyecto',
       'pp-3-dias',
+      'pp-legacy',
       'pp-7-dias',
       'pp-8-dias',
     ]);
-    expect(report.alerts.payables.items.map((payable) => payable.daysUntil)).toEqual([0, 3, 3, 3, 7, 8]);
+    expect(report.alerts.payables.items.map((payable) => payable.daysUntil)).toEqual([0, 3, 3, 3, 4, 7, 8]);
     expect(report.alerts.payables.isTruncated).toBe(false);
   });
 
   it('incluye compromisos de proyectos sin ingresos y sin proyecto asignado', () => {
     const payablesFixture = [
-      { id: 'pp-sin-ingresos', fechaCompromiso: '2026-02-13', montoTotal: 800, proyectoId: 'project-3', empresaNombre: 'Proveedor Sin Ingresos', facturado: true },
-      { id: 'pp-sin-proyecto', fechaCompromiso: '2026-02-13', montoTotal: 700, proyectoId: null, empresaNombre: 'Proveedor Suelto', facturado: true },
-      { id: 'pp-con-ingresos', fechaCompromiso: '2026-02-13', montoTotal: 200, proyectoId: 'project-1', empresaNombre: 'Proveedor Uno', facturado: true },
+      { id: 'pp-sin-ingresos', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-13', montoTotal: 800, proyectoId: 'project-3', empresaNombre: 'Proveedor Sin Ingresos', facturado: true },
+      { id: 'pp-sin-proyecto', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-13', montoTotal: 700, proyectoId: null, empresaNombre: 'Proveedor Suelto', facturado: true },
+      { id: 'pp-con-ingresos', fechaCompromiso: '2026-01-15', fechaPago: '2026-02-13', montoTotal: 200, proyectoId: 'project-1', empresaNombre: 'Proveedor Uno', facturado: true },
     ];
     const base = {
       projects: baseProjects,

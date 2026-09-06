@@ -242,6 +242,12 @@ type GastoMutationPayload = Omit<Gasto, 'id' | 'archivosAdjuntos'> & {
 };
 type GastoDocumentExtractionResult = {
   fecha: string | null;
+  /** Fecha de vencimiento / fecha de pago detectada en el documento. */
+  fechaVencimiento?: string | null;
+  /** Dias de credito declarados en el documento (ej: pago a 30 dias). */
+  plazoPagoDias?: number | null;
+  /** true si el documento desglosa o incluye IVA. */
+  tieneIva?: boolean | null;
   tipoDocumento: 'FACTURA' | 'BOLETA' | 'BOLETA DE HONORARIO' | 'FACTURA EXENTA' | 'OTRO';
   numeroDocumento: string | null;
   empresaNombre: string | null;

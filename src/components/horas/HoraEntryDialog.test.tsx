@@ -62,7 +62,7 @@ describe('HoraEntryDialog', () => {
       />,
     );
 
-    expect(screen.getByLabelText('Fecha')).toHaveValue('2026-09-04');
+    expect(screen.getByLabelText('Fecha')).toHaveValue('04/09/2026');
 
     fireEvent.click(screen.getByRole('button', { name: 'Guardar horas' }));
 

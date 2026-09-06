@@ -65,7 +65,8 @@ const gastoPendiente = {
   monto: 100000,
   montoTotal: 100000,
   origen: 'COMPROMISO' as const,
-  fechaCompromiso: '2026-10-15',
+  fechaCompromiso: '2026-09-01',
+  fechaPago: '2026-10-15',
   facturado: true,
   pagado: false,
   creadoPorNombre: 'Tester',
@@ -150,8 +151,33 @@ describe('GastosPorPagar', () => {
     renderPage();
     await screen.findByText('Proveedor Uno SPA');
 
-    fireEvent.click(screen.getByRole('button', { name: /nuevo gasto por pagar/i }));
+    fireEvent.click(screen.getByRole('button', { name: /nuevo pago pendiente/i }));
 
     expect(screen.getByTestId('gasto-modal')).toHaveTextContent('compromiso');
+  });
+
+  it('ordena por vencimiento (fechaPago) y no por la fecha del documento', async () => {
+    // El orden por fecha de documento seria el inverso: 'tarde' es de agosto y
+    // 'pronto' de septiembre. Manda fechaPago.
+    vi.mocked(postgresApi.getGastosPorPagar).mockResolvedValue([
+      { ...gastoPendiente, id: 'tarde', numeroDocumento: 'F-TARDE', fechaCompromiso: '2026-08-01', fechaPago: '2026-12-20' },
+      { ...gastoPendiente, id: 'pronto', numeroDocumento: 'F-PRONTO', fechaCompromiso: '2026-09-15', fechaPago: '2026-09-20' },
+    ]);
+
+    renderPage();
+    await screen.findByText(/F-PRONTO/);
+
+    const filas = screen.getAllByRole('row').slice(1);
+    expect(filas[0]).toHaveTextContent('F-PRONTO');
+    expect(filas[1]).toHaveTextContent('F-TARDE');
+  });
+
+  it('muestra la fecha de pago sin correrla un dia', async () => {
+    renderPage();
+    await screen.findByText('Proveedor Uno SPA');
+
+    // fechaPago '2026-10-15' debe verse tal cual, no como 14/10/2026.
+    expect(screen.getByText('15/10/2026')).toBeInTheDocument();
+    expect(screen.getByText('01/09/2026')).toBeInTheDocument();
   });
 });

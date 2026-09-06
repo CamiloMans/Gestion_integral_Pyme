@@ -155,16 +155,113 @@ describe('GastoModal', () => {
       expect(screen.getByRole('checkbox', { name: 'Pagado' })).toHaveAttribute('aria-checked', 'false');
     });
 
-    it('does not call document extraction when attaching a file', async () => {
-      render(<GastoModal {...props} mode="compromiso" />);
+    const tipoFactura = { id: 'tipo-factura', nombre: 'FACTURA', tieneImpuestos: true, valorImpuestos: 0.19 };
+
+    const extraccionFactura = {
+      fecha: '2026-10-15',
+      fechaVencimiento: '2026-11-14',
+      plazoPagoDias: null,
+      tieneIva: true,
+      tipoDocumento: 'FACTURA' as const,
+      numeroDocumento: '9001',
+      empresaNombre: 'Proveedor Uno SPA',
+      empresaRut: '76.123.456-7',
+      emisorNombre: null,
+      emisorRut: null,
+      receptorNombre: null,
+      receptorRut: null,
+      montoNeto: 100000,
+      iva: 19000,
+      montoTotal: 119000,
+      detalle: 'Servicio mensual',
+      confidence: 0.9,
+      warnings: [],
+    };
+
+    it('extracts the attached document and fills compromiso dates and IVA', async () => {
+      vi.mocked(postgresApi.extractGastoDocument).mockResolvedValue(extraccionFactura);
+
+      render(
+        <GastoModal
+          {...props}
+          mode="compromiso"
+          tiposDocumento={[...props.tiposDocumento, tipoFactura]}
+        />
+      );
 
       const input = document.querySelector('#archivosAdjuntos') as HTMLInputElement;
       const file = new File(['pdf'], 'factura-futura.pdf', { type: 'application/pdf' });
 
       fireEvent.change(input, { target: { files: [file] } });
 
-      await waitFor(() => expect(screen.getByText('factura-futura.pdf')).toBeInTheDocument());
-      expect(postgresApi.extractGastoDocument).not.toHaveBeenCalled();
+      await waitFor(() => expect(postgresApi.extractGastoDocument).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026'));
+
+      expect(screen.getByText('factura-futura.pdf')).toBeInTheDocument();
+      expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('14/11/2026');
+      expect(screen.getByRole('radio', { name: '30 dias' })).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByLabelText('Numero de Documento')).toHaveValue('9001');
+      expect(screen.getByLabelText('Monto Total (CLP) *')).toHaveValue('119.000');
+      expect(screen.getByText(/Monto IVA \(19\.00%\)/)).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+        description: expect.stringContaining('Documento con IVA.'),
+      }));
+    });
+
+    it('derives fecha pago from the extracted payment term when there is no due date', async () => {
+      vi.mocked(postgresApi.extractGastoDocument).mockResolvedValue({
+        ...extraccionFactura,
+        fechaVencimiento: null,
+        plazoPagoDias: 45,
+      });
+
+      render(
+        <GastoModal
+          {...props}
+          mode="compromiso"
+          tiposDocumento={[...props.tiposDocumento, tipoFactura]}
+        />
+      );
+
+      const input = document.querySelector('#archivosAdjuntos') as HTMLInputElement;
+      const file = new File(['pdf'], 'factura-45-dias.pdf', { type: 'application/pdf' });
+
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('29/11/2026'));
+      expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026');
+      expect(screen.getByRole('radio', { name: '30 dias' })).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByRole('radio', { name: '60 dias' })).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByRole('radio', { name: '90 dias' })).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('reports a document without IVA and without due date', async () => {
+      vi.mocked(postgresApi.extractGastoDocument).mockResolvedValue({
+        ...extraccionFactura,
+        tipoDocumento: 'BOLETA' as const,
+        fechaVencimiento: null,
+        plazoPagoDias: null,
+        tieneIva: false,
+        montoNeto: null,
+        iva: null,
+        montoTotal: 2500,
+      });
+
+      render(<GastoModal {...props} mode="compromiso" />);
+
+      const input = document.querySelector('#archivosAdjuntos') as HTMLInputElement;
+      const file = new File(['pdf'], 'boleta.pdf', { type: 'application/pdf' });
+
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026'));
+      expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('');
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+        description: expect.stringContaining('Documento sin IVA.'),
+      }));
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+        description: expect.stringContaining('Sin fecha de pago en el documento.'),
+      }));
     });
 
     it('includes compromiso fields in onSave payload', async () => {
@@ -173,7 +270,7 @@ describe('GastoModal', () => {
       render(<GastoModal {...props} onSave={onSave} mode="compromiso" gasto={gastoCompromiso} />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('2026-10-15');
+        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026');
       });
 
       const form = screen.getByRole('button', { name: /guardar/i }).closest('form') as HTMLFormElement;
@@ -204,7 +301,7 @@ describe('GastoModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('2026-10-15');
+        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026');
       });
 
       const form = screen.getByRole('button', { name: /guardar/i }).closest('form') as HTMLFormElement;
@@ -230,7 +327,7 @@ describe('GastoModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('2026-10-15');
+        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026');
       });
 
       const form = screen.getByRole('button', { name: /guardar/i }).closest('form') as HTMLFormElement;
@@ -258,7 +355,7 @@ describe('GastoModal', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('2026-10-15');
+        expect(screen.getByLabelText('Fecha Compromiso *')).toHaveValue('15/10/2026');
       });
 
       const form = screen.getByRole('button', { name: /guardar/i }).closest('form') as HTMLFormElement;
@@ -279,10 +376,10 @@ describe('GastoModal', () => {
       fireEvent.change(screen.getByLabelText('Fecha Compromiso *'), { target: { value: '2026-10-15' } });
       fireEvent.click(screen.getByRole('radio', { name: '30 dias' }));
 
-      expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('2026-11-14');
+      expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('14/11/2026');
 
       fireEvent.change(screen.getByLabelText('Fecha Compromiso *'), { target: { value: '2026-10-20' } });
-      expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('2026-11-19');
+      expect(screen.getByLabelText('Fecha Pago *')).toHaveValue('19/11/2026');
 
       fireEvent.change(screen.getByLabelText('Fecha Pago *'), { target: { value: '2026-12-01' } });
       expect(screen.getByRole('radio', { name: '30 dias' })).toHaveAttribute('aria-checked', 'false');

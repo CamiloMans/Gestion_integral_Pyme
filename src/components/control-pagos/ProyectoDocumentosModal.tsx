@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { formatDateOnly, toDateOnly, todayDateOnly } from "@/lib/date-format";
@@ -470,13 +471,10 @@ export function ProyectoDocumentosModal({
 
                 <div className="space-y-2">
                   <Label htmlFor="fechaDocumentoProyecto">Fecha Documento *</Label>
-                  <Input
+                  <DateInput
                     id="fechaDocumentoProyecto"
-                    type="date"
                     value={fechaDocumento}
                     onChange={(e) => setFechaDocumento(e.target.value)}
-                    onClick={(e) => e.currentTarget.showPicker?.()}
-                    onFocus={(e) => e.currentTarget.showPicker?.()}
                     required
                   />
                 </div>

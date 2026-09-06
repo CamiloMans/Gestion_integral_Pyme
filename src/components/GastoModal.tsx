@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DateInput } from '@/components/ui/date-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -23,7 +24,7 @@ import {
   resolveEmpresaMatch as resolveExtractedEmpresaMatch,
   resolveTipoDocumentoId as resolveExtractedTipoDocumentoId,
 } from '@/lib/gasto-document';
-import { parseDateOnly, toDateOnly, todayDateOnly } from '@/lib/date-format';
+import { formatDateOnly, parseDateOnly, toDateOnly, todayDateOnly } from '@/lib/date-format';
 import { addDays, format } from 'date-fns';
 
 type CategoriaOption = {
@@ -43,6 +44,17 @@ type TipoDocumentoOption = {
 };
 
 type GastoAdjunto = NonNullable<Gasto['archivosAdjuntos']>[number];
+
+const PLAZOS_PAGO_PRESET = ['30', '60', '90'] as const;
+
+/** Dias calendario entre dos fechas 'YYYY-MM-DD'; null si alguna no es valida. */
+function diasEntreFechas(desde: string, hasta: string) {
+  const inicio = parseDateOnly(desde);
+  const fin = parseDateOnly(hasta);
+  if (!inicio || !fin) return null;
+
+  return Math.round((fin.getTime() - inicio.getTime()) / (24 * 60 * 60 * 1000));
+}
 
 interface GastoModalProps {
   open: boolean;
@@ -447,10 +459,44 @@ export function GastoModal({
     return resolveExtractedEmpresaMatch(todasLasEmpresas, extracted);
   }, [todasLasEmpresas]);
 
+  const applyExtractedCompromisoDates = useCallback((extracted: GastoDocumentExtractionResult) => {
+    const fechaEmision = toDateOnly(extracted.fecha);
+    if (fechaEmision) {
+      setFechaCompromiso(fechaEmision);
+    }
+
+    const plazoDetectado = typeof extracted.plazoPagoDias === 'number' && Number.isFinite(extracted.plazoPagoDias)
+      ? extracted.plazoPagoDias
+      : null;
+
+    // Fecha de pago = vencimiento del documento; si no viene, se deriva del plazo declarado.
+    let fechaVencimiento = toDateOnly(extracted.fechaVencimiento);
+    if (!fechaVencimiento && fechaEmision && plazoDetectado && plazoDetectado > 0) {
+      const base = parseDateOnly(fechaEmision);
+      if (base) {
+        fechaVencimiento = format(addDays(base, plazoDetectado), 'yyyy-MM-dd');
+      }
+    }
+
+    if (!fechaVencimiento) {
+      return { fechaEmision, fechaVencimiento: '', dias: null as number | null };
+    }
+
+    setFechaPago(fechaVencimiento);
+
+    const dias = fechaEmision ? diasEntreFechas(fechaEmision, fechaVencimiento) : plazoDetectado;
+    const plazoPreset = PLAZOS_PAGO_PRESET.find((preset) => Number(preset) === dias);
+    setPlazoPago(plazoPreset || '');
+
+    return { fechaEmision, fechaVencimiento, dias };
+  }, []);
+
   const applyExtractedDocumentData = useCallback((extracted: GastoDocumentExtractionResult) => {
     if (extracted.fecha && /^\d{4}-\d{2}-\d{2}$/.test(extracted.fecha)) {
       setFecha(extracted.fecha);
     }
+
+    const compromisoDates = esCompromiso ? applyExtractedCompromisoDates(extracted) : null;
 
     const resolvedTipoDocumentoId = resolveTipoDocumentoId(extracted.tipoDocumento);
     if (resolvedTipoDocumentoId) {
@@ -484,12 +530,21 @@ export function GastoModal({
       ? ` Empresa: ${Math.round(resolvedEmpresaMatch.score * 100)}% por ${resolvedEmpresaMatch.method}.`
       : ' Empresa no encontrada automaticamente.';
     const warnings = extracted.warnings?.length ? ` ${extracted.warnings.join(' ')}` : '';
+    const tieneIva = typeof extracted.tieneIva === 'boolean'
+      ? extracted.tieneIva
+      : typeof extracted.iva === 'number' && extracted.iva > 0;
+    const ivaInfo = tieneIva ? ' Documento con IVA.' : ' Documento sin IVA.';
+    const fechasInfo = compromisoDates?.fechaVencimiento
+      ? ` Fecha pago: ${formatDateOnly(compromisoDates.fechaVencimiento)}${
+          typeof compromisoDates.dias === 'number' ? ` (${compromisoDates.dias} dias).` : '.'
+        }`
+      : (esCompromiso ? ' Sin fecha de pago en el documento.' : '');
     toast({
       title: 'Documento escaneado',
-      description: `Se completaron los datos detectados.${apiConfidence}${empresaConfidence}${warnings}`,
+      description: `Se completaron los datos detectados.${apiConfidence}${empresaConfidence}${ivaInfo}${fechasInfo}${warnings}`,
       variant: 'success',
     });
-  }, [resolveEmpresaId, resolveTipoDocumentoId]);
+  }, [applyExtractedCompromisoDates, esCompromiso, resolveEmpresaId, resolveTipoDocumentoId]);
 
   const processAttachmentFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) {
@@ -504,10 +559,6 @@ export function GastoModal({
     }));
 
     setArchivosAdjuntos((prev) => [...prev, ...nuevosArchivos]);
-
-    if (esCompromiso) {
-      return;
-    }
 
     const fileToExtract = files.find(isExtractableDocument);
     if (!fileToExtract) {
@@ -528,7 +579,7 @@ export function GastoModal({
     } finally {
       setIsExtractingDocument(false);
     }
-  }, [applyExtractedDocumentData, esCompromiso]);
+  }, [applyExtractedDocumentData]);
 
   const handleAttachmentInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -612,19 +663,12 @@ export function GastoModal({
               {!esCompromiso && (
                 <div className="space-y-2 min-w-0">
                   <Label htmlFor="fecha">Fecha *</Label>
-                  <Input
+                  <DateInput
                     id="fecha"
-                    type="date"
                     value={fecha}
                     onChange={(e) => setFecha(e.target.value)}
                     required
                     className="w-full h-10 min-w-0"
-                    style={{
-                      WebkitAppearance: 'none',
-                      appearance: 'none',
-                      minWidth: 0,
-                      maxWidth: '100%',
-                    }}
                   />
                 </div>
               )}
@@ -872,7 +916,7 @@ export function GastoModal({
                 <Paperclip size={14} />
                 <span>Arrastra imagenes o documentos aqui</span>
               </div>
-              {!esCompromiso && aplicaImpuesto && (
+              {aplicaImpuesto && (
                 <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
                   <div className="flex justify-between items-center text-sm pt-2 border-t">
                     <span className="font-semibold">Monto Total:</span>
@@ -902,19 +946,7 @@ export function GastoModal({
                   )}
                 </div>
               )}
-              {esCompromiso && monto && (
-                <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
-                  <div className="flex justify-between items-center text-sm pt-2 border-t">
-                    <span className="font-semibold">Monto Total:</span>
-                    <span className="font-bold text-lg">
-                      {Number.isFinite(montoValue) && montoValue > 0
-                        ? montoValue.toLocaleString('es-CL')
-                        : '0'} CLP
-                    </span>
-                  </div>
-                </div>
-              )}
-              {!esCompromiso && !aplicaImpuesto && monto && (
+              {!aplicaImpuesto && monto && (
                 <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
                   <div className="flex justify-between items-center text-sm pt-2 border-t">
                     <span className="font-semibold">Monto Total:</span>
@@ -981,9 +1013,8 @@ export function GastoModal({
                     <div className="flex items-center h-8">
                       <Label htmlFor="fechaCompromiso">Fecha Compromiso *</Label>
                     </div>
-                    <Input
+                    <DateInput
                       id="fechaCompromiso"
-                      type="date"
                       value={fechaCompromiso}
                       onChange={(e) => {
                         setFechaCompromiso(e.target.value);
@@ -1014,9 +1045,8 @@ export function GastoModal({
                         <ToggleGroupItem value="90" aria-label="90 dias" className="text-xs px-2 py-1 h-7 data-[state=on]:bg-muted">90d</ToggleGroupItem>
                       </ToggleGroup>
                     </div>
-                    <Input
+                    <DateInput
                       id="fechaPago"
-                      type="date"
                       value={fechaPago}
                       onChange={(e) => {
                         setFechaPago(e.target.value);

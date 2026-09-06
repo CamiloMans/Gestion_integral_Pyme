@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -758,18 +759,16 @@ export default function ControlPagosHitos() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="fechaCompromiso">Fecha Compromiso</Label>
-                <Input
+                <DateInput
                   id="fechaCompromiso"
-                  type="date"
                   value={form.fechaCompromiso}
                   onChange={(e) => setForm((prev) => ({ ...prev, fechaCompromiso: e.target.value }))}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="fechaPago">Fecha Pago</Label>
-                <Input
+                <DateInput
                   id="fechaPago"
-                  type="date"
                   value={form.fechaPago}
                   onChange={(e) => setForm((prev) => ({ ...prev, fechaPago: e.target.value }))}
                 />

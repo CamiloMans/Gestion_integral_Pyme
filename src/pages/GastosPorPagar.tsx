@@ -16,10 +16,29 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { toast } from '@/hooks/use-toast';
 import { postgresApi, type BootstrapResponse, type CategoriaOption, type TipoDocumentoOption } from '@/services/postgresApi';
 import { useAppAuth } from '@/hooks/useAppAuth';
-import { todayDateOnly } from '@/lib/date-format';
+import { formatDateOnly, parseDateOnly, toDateOnly, todayDateOnly } from '@/lib/date-format';
 
 const PAGE_SIZE = 50;
 const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
+
+const DIAS_VENCIMIENTO_PROXIMO = 7;
+
+/** Fecha en la que hay que pagar. fechaCompromiso es solo respaldo para filas antiguas. */
+function vencimientoDe(gasto: Gasto) {
+  return gasto.fechaPago || gasto.fechaCompromiso;
+}
+
+/** Dias hasta el vencimiento: negativo si ya vencio, null si no hay fecha. */
+function diasHastaVencimiento(gasto: Gasto) {
+  const vencimiento = toDateOnly(vencimientoDe(gasto));
+  if (!vencimiento) return null;
+
+  const hoy = parseDateOnly(todayDateOnly());
+  const fecha = parseDateOnly(vencimiento);
+  if (!hoy || !fecha) return null;
+
+  return Math.round((fecha.getTime() - hoy.getTime()) / 86400000);
+}
 
 function sortGastosPorPagar(items: Gasto[]) {
   const toTime = (value?: string) => {
@@ -28,10 +47,11 @@ function sortGastosPorPagar(items: Gasto[]) {
   };
 
   return [...items].sort((a, b) => {
-    // Compromisos mas proximos primero; sin fecha compromiso al final.
-    const compromisoDiff = toTime(a.fechaCompromiso) - toTime(b.fechaCompromiso);
-    if (compromisoDiff !== 0) {
-      return compromisoDiff;
+    // Vencimientos mas proximos primero; sin fecha al final. El vencimiento es
+    // fechaPago (fechaCompromiso es la fecha del documento).
+    const vencimientoDiff = toTime(vencimientoDe(a)) - toTime(vencimientoDe(b));
+    if (vencimientoDiff !== 0) {
+      return vencimientoDiff;
     }
     const toCreated = (value?: string) => {
       const parsed = new Date(value || '').getTime();
@@ -524,6 +544,7 @@ export default function GastosPorPagar() {
                 <TableHead className="font-semibold">DOCUMENTO</TableHead>
                 <TableHead className="font-semibold text-right">MONTO TOTAL</TableHead>
                 <TableHead className="font-semibold">F. COMPROMISO</TableHead>
+                <TableHead className="font-semibold">F. PAGO</TableHead>
                 <TableHead className="font-semibold text-center">ESTADO</TableHead>
                 <TableHead className="font-semibold text-center">ACCIONES</TableHead>
               </TableRow>
@@ -531,7 +552,7 @@ export default function GastosPorPagar() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8">
+                  <TableCell colSpan={10} className="text-center py-8">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                       <span className="text-muted-foreground">Conectando con PostgreSQL...</span>
@@ -540,7 +561,7 @@ export default function GastosPorPagar() {
                 </TableRow>
               ) : filteredGastos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                     {error ? 'No se pudo cargar la informacion desde PostgreSQL' : 'No se encontraron gastos por pagar'}
                   </TableCell>
                 </TableRow>
@@ -621,9 +642,26 @@ export default function GastosPorPagar() {
                           : formatCurrency(gasto.monto)}
                       </TableCell>
                       <TableCell>
-                        <p className="text-muted-foreground">
-                          {gasto.fechaCompromiso ? formatDate(gasto.fechaCompromiso) : '-'}
-                        </p>
+                        <p className="text-muted-foreground">{formatDateOnly(gasto.fechaCompromiso)}</p>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {(() => {
+                          const dias = diasHastaVencimiento(gasto);
+                          const urgente = dias !== null && dias <= DIAS_VENCIMIENTO_PROXIMO;
+
+                          return (
+                            <>
+                              <p className={urgente ? 'font-medium text-red-700' : 'font-medium'}>
+                                {formatDateOnly(vencimientoDe(gasto))}
+                              </p>
+                              {dias !== null && (
+                                <p className={`text-xs ${urgente ? 'text-red-700' : 'text-muted-foreground'}`}>
+                                  {dias < 0 ? `Vencido hace ${Math.abs(dias)} dia(s)` : dias === 0 ? 'Vence hoy' : `En ${dias} dia(s)`}
+                                </p>
+                              )}
+                            </>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-center">
                         <span

@@ -198,14 +198,17 @@ export function buildReportesPortafolio({
     .map((gasto) => ({
       id: String(gasto.id),
       projectId: gasto.proyectoId ? String(gasto.proyectoId) : null,
-      commitmentDate: dateKey(gasto.fechaCompromiso),
+      // El vencimiento es fechaPago: fechaCompromiso es la fecha del documento
+      // (en modo compromiso el modal la copia a `fecha`). El respaldo cubre filas
+      // anteriores a que fechaPago pasara a ser obligatoria.
+      dueDate: dateKey(gasto.fechaPago) || dateKey(gasto.fechaCompromiso),
       amountClp: roundClp(toNumber(gasto.montoTotal) ?? 0),
       supplierName: gasto.empresaNombre || 'Proveedor no informado',
       categoryName: gasto.categoriaNombre || 'Sin categoria',
       invoiced: Boolean(gasto.facturado),
     }))
     .filter((payable) => matchesPayableProject(payable.projectId)
-      && isInPeriod(payable.commitmentDate, year, month))
+      && isInPeriod(payable.dueDate, year, month))
     .map((payable) => ({
       id: payable.id,
       projectId: payable.projectId,
@@ -214,8 +217,8 @@ export function buildReportesPortafolio({
         : 'Sin proyecto',
       supplierName: payable.supplierName,
       categoryName: payable.categoryName,
-      date: payable.commitmentDate,
-      daysUntil: daysBetweenKeys(today, payable.commitmentDate),
+      date: payable.dueDate,
+      daysUntil: daysBetweenKeys(today, payable.dueDate),
       amountClp: payable.amountClp,
       invoiced: payable.invoiced,
     }))
