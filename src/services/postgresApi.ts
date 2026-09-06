@@ -343,6 +343,18 @@ type ReportesProject = {
   health: 'sobre_presupuesto' | 'atencion' | 'en_rango' | 'sin_presupuesto';
 };
 
+type PayableAlertItem = {
+  id: string;
+  projectId: string | null;
+  projectName: string;
+  supplierName: string;
+  categoryName: string;
+  date: string;
+  daysUntil: number;
+  amountClp: number;
+  invoiced: boolean;
+};
+
 type ReportesPortafolioResponse = {
   summary: {
     totalProjects: number;
@@ -356,6 +368,8 @@ type ReportesPortafolioResponse = {
     invoicedPendingClp: number;
     toInvoiceClp: number;
     toCollectClp: number;
+    payablesClp: number;
+    payablesCount: number;
   };
   paidMilestones: {
     totalCount: number;
@@ -422,6 +436,20 @@ type ReportesPortafolioResponse = {
       amount: number;
       currency: string;
     }>;
+    payables: {
+      count: number;
+      amountClp: number;
+      dueSoonCount: number;
+      dueSoonAmountClp: number;
+      items: PayableAlertItem[];
+      isTruncated: boolean;
+    };
+    overduePayables: {
+      count: number;
+      amountClp: number;
+      items: PayableAlertItem[];
+      isTruncated: boolean;
+    };
   };
   meta: {
     filters: {
@@ -949,6 +977,7 @@ export type {
   AsistenciaUser,
   AsistenciaRegistroInput,
   AsistenciaTipoRegistro,
+  PayableAlertItem,
   ReportesFilterInput,
   ReportesPortafolioResponse,
   ReportesProject,

@@ -2,6 +2,9 @@ import { APP_TIMEZONE, formatDateInTimeZone } from './time.js';
 
 const MONTH_LABELS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
+const PAYABLE_DUE_SOON_DAYS = 7;
+const ALERT_ITEMS_LIMIT = 50;
+
 function toNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
@@ -31,6 +34,13 @@ function dateKey(value) {
 function dateFromKey(value) {
   const parsed = new Date(`${value}T00:00:00Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function daysBetweenKeys(fromKey, toKey) {
+  const from = dateFromKey(fromKey);
+  const to = dateFromKey(toKey);
+  if (!from || !to) return null;
+  return Math.round((to - from) / 86400000);
 }
 
 function isInPeriod(value, year, month) {
@@ -122,6 +132,7 @@ function buildBreakdown(items, nameGetter, total) {
 export function buildReportesPortafolio({
   projects = [],
   gastos = [],
+  gastosPorPagar = [],
   hitos = [],
   filters = {},
   now = new Date(),
@@ -174,6 +185,45 @@ export function buildReportesPortafolio({
       amountClp: roundClp(toNumber(gasto.montoTotal) ?? toNumber(gasto.monto) ?? 0),
     }))
     .filter((gasto) => !gasto.proyectoId && isInPeriod(gasto.fecha, year, month));
+
+  // Un compromiso por pagar es deuda exista o no ingreso asociado, asi que los
+  // por pagar no pasan por el filtro de ingresos ni exigen proyecto asignado:
+  // solo respetan la seleccion explicita de proyecto y el periodo.
+  const allProjectMap = mapById(projects);
+  const matchesPayableProject = (projectId) => (projectFilter === 'all'
+    ? true
+    : projectId !== null && projectId === String(projectFilter));
+
+  const payables = gastosPorPagar
+    .map((gasto) => ({
+      id: String(gasto.id),
+      projectId: gasto.proyectoId ? String(gasto.proyectoId) : null,
+      commitmentDate: dateKey(gasto.fechaCompromiso),
+      amountClp: roundClp(toNumber(gasto.montoTotal) ?? 0),
+      supplierName: gasto.empresaNombre || 'Proveedor no informado',
+      categoryName: gasto.categoriaNombre || 'Sin categoria',
+      invoiced: Boolean(gasto.facturado),
+    }))
+    .filter((payable) => matchesPayableProject(payable.projectId)
+      && isInPeriod(payable.commitmentDate, year, month))
+    .map((payable) => ({
+      id: payable.id,
+      projectId: payable.projectId,
+      projectName: payable.projectId
+        ? allProjectMap.get(payable.projectId)?.nombre || 'Proyecto'
+        : 'Sin proyecto',
+      supplierName: payable.supplierName,
+      categoryName: payable.categoryName,
+      date: payable.commitmentDate,
+      daysUntil: daysBetweenKeys(today, payable.commitmentDate),
+      amountClp: payable.amountClp,
+      invoiced: payable.invoiced,
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date) || right.amountClp - left.amountClp);
+
+  const overduePayables = payables.filter((payable) => payable.daysUntil < 0);
+  const pendingPayables = payables.filter((payable) => payable.daysUntil >= 0);
+  const dueSoonPayables = pendingPayables.filter((payable) => payable.daysUntil <= PAYABLE_DUE_SOON_DAYS);
 
   const normalizedHitos = [];
   const unconvertibleMilestones = [];
@@ -258,10 +308,8 @@ export function buildReportesPortafolio({
       toCollectClp: budgetClp === null ? null : Math.max(0, roundClp(budgetClp - paidClp)),
       nextMilestoneDate: nextMilestone?.commitmentDate || null,
       overdueDays: overdueHitos.reduce((max, hito) => {
-        const commitment = dateFromKey(hito.commitmentDate);
-        const current = dateFromKey(today);
-        if (!commitment || !current) return max;
-        return Math.max(max, Math.ceil((current - commitment) / 86400000));
+        const days = daysBetweenKeys(hito.commitmentDate, today);
+        return days === null ? max : Math.max(max, days);
       }, 0),
       overdueMilestonesCount: overdueHitos.length,
       milestoneCount: projectHitos.length,
@@ -353,6 +401,20 @@ export function buildReportesPortafolio({
         .sort((left, right) => (right.date || '').localeCompare(left.date || '')),
     },
     unconvertibleMilestones,
+    payables: {
+      count: pendingPayables.length,
+      amountClp: roundClp(sumBy(pendingPayables, (payable) => payable.amountClp)),
+      dueSoonCount: dueSoonPayables.length,
+      dueSoonAmountClp: roundClp(sumBy(dueSoonPayables, (payable) => payable.amountClp)),
+      items: pendingPayables.slice(0, ALERT_ITEMS_LIMIT),
+      isTruncated: pendingPayables.length > ALERT_ITEMS_LIMIT,
+    },
+    overduePayables: {
+      count: overduePayables.length,
+      amountClp: roundClp(sumBy(overduePayables, (payable) => payable.amountClp)),
+      items: overduePayables.slice(0, ALERT_ITEMS_LIMIT),
+      isTruncated: overduePayables.length > ALERT_ITEMS_LIMIT,
+    },
   };
 
   return {
@@ -368,6 +430,8 @@ export function buildReportesPortafolio({
       invoicedPendingClp,
       toInvoiceClp: Math.max(0, roundClp(toInvoiceRawClp)),
       toCollectClp: Math.max(0, roundClp(toCollectRawClp)),
+      payablesClp: roundClp(sumBy(payables, (payable) => payable.amountClp)),
+      payablesCount: payables.length,
     },
     paidMilestones: {
       totalCount: paidMilestoneItems.length,

@@ -2801,7 +2801,7 @@ async function fetchReportesData(tenantId) {
   const activeColumn = await getActiveColumnName('dim_proyecto');
   const activeSelect = activeColumn ? `p.${activeColumn}` : 'true';
 
-  const [projects, gastos, hitos] = await Promise.all([
+  const [projects, gastos, gastosPorPagar, hitos] = await Promise.all([
     query(
       `
         select
@@ -2837,6 +2837,30 @@ async function fetchReportesData(tenantId) {
           on e.id = g.empresa_id
         where g.tenant_id = $1
           and g.pagado = true
+      `,
+      [tenantId],
+    ),
+    query(
+      `
+        select
+          g.id,
+          g.fecha,
+          g.fecha_compromiso,
+          g.monto_total,
+          g.proyecto_id,
+          g.categoria_id,
+          c.nombre as categoria_nombre,
+          g.empresa_id,
+          e.razon_social as empresa_nombre,
+          g.facturado
+        from fct_gasto g
+        left join dim_categoria c
+          on c.id = g.categoria_id
+        left join dim_empresa e
+          on e.id = g.empresa_id
+        where g.tenant_id = $1
+          and g.origen = 'COMPROMISO'
+          and g.pagado = false
       `,
       [tenantId],
     ),
@@ -2879,6 +2903,18 @@ async function fetchReportesData(tenantId) {
       categoriaNombre: row.categoria_nombre || null,
       empresaId: row.empresa_id || null,
       empresaNombre: row.empresa_nombre || null,
+    })),
+    gastosPorPagar: gastosPorPagar.rows.map((row) => ({
+      id: row.id,
+      fecha: row.fecha,
+      fechaCompromiso: row.fecha_compromiso,
+      montoTotal: normalizeNumeric(row.monto_total) ?? 0,
+      proyectoId: row.proyecto_id || null,
+      categoriaId: row.categoria_id || null,
+      categoriaNombre: row.categoria_nombre || null,
+      empresaId: row.empresa_id || null,
+      empresaNombre: row.empresa_nombre || null,
+      facturado: row.facturado !== false,
     })),
     hitos: hitos.rows.map((row) => ({
       id: row.id,

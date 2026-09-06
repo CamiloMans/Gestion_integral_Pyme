@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowRight,
+  CalendarClock,
   CheckCircle2,
   Clock3,
   FolderKanban,
@@ -15,9 +16,18 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDateOnly } from '@/lib/date-format';
-import type { ReportesPortafolioResponse } from '@/services/postgresApi';
+import type { PayableAlertItem, ReportesPortafolioResponse } from '@/services/postgresApi';
 
-type AlertKind = 'overBudget' | 'overdueMilestones' | 'missingBudget' | 'unassignedExpenses' | 'unconvertibleMilestones';
+const PAYABLE_DUE_SOON_DAYS = 7;
+
+type AlertKind =
+  | 'overBudget'
+  | 'overdueMilestones'
+  | 'missingBudget'
+  | 'unassignedExpenses'
+  | 'unconvertibleMilestones'
+  | 'payables'
+  | 'overduePayables';
 
 type AlertCardProps = {
   icon: LucideIcon;
@@ -68,6 +78,12 @@ function formatOriginalAmount(value: number, currency: string) {
   }
 }
 
+function dueLabel(daysUntil: number) {
+  if (daysUntil < 0) return `Vencido hace ${Math.abs(daysUntil)} dia(s)`;
+  if (daysUntil === 0) return 'Vence hoy';
+  return `En ${daysUntil} dia(s)`;
+}
+
 function AlertCard({ icon: Icon, title, description, tone, onClick, wide }: AlertCardProps) {
   return (
     <button
@@ -102,6 +118,42 @@ function AlertTable({ children }: { children: ReactNode }) {
   return <div className="max-h-[min(62vh,34rem)] overflow-auto">{children}</div>;
 }
 
+function PayablesTable({
+  items,
+  isTruncated,
+  canOpen,
+  onOpen,
+}: {
+  items: PayableAlertItem[];
+  isTruncated: boolean;
+  canOpen: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <AlertTable>
+      <Table>
+        <TableHeader><TableRow><TableHead>Vencimiento</TableHead><TableHead>Proveedor / categoria</TableHead><TableHead>Proyecto</TableHead><TableHead>Monto</TableHead><TableHead className="text-right">Accion</TableHead></TableRow></TableHeader>
+        <TableBody>{items.map((payable) => {
+          const urgent = payable.daysUntil <= PAYABLE_DUE_SOON_DAYS;
+          return (
+            <TableRow key={payable.id}>
+              <TableCell className="whitespace-nowrap">
+                <p className={urgent ? 'font-medium text-red-700' : 'font-medium'}>{formatDateOnly(payable.date)}</p>
+                <p className={`text-xs ${urgent ? 'text-red-700' : 'text-muted-foreground'}`}>{dueLabel(payable.daysUntil)}</p>
+              </TableCell>
+              <TableCell><p className="font-medium">{payable.supplierName}</p><p className="text-xs text-muted-foreground">{payable.categoryName}</p></TableCell>
+              <TableCell className="text-xs text-muted-foreground">{payable.projectName}</TableCell>
+              <TableCell className="whitespace-nowrap tabular-nums">{formatAmount(payable.amountClp)}</TableCell>
+              <TableCell className="text-right">{canOpen ? <ActionButton label="Abrir por pagar" onClick={onOpen} /> : '-'}</TableCell>
+            </TableRow>
+          );
+        })}</TableBody>
+      </Table>
+      {isTruncated && <p className="px-4 py-3 text-xs text-muted-foreground">Mostrando los primeros {items.length} registros.</p>}
+    </AlertTable>
+  );
+}
+
 type AlertsPanelProps = {
   data: ReportesPortafolioResponse;
   canOpenExpenses?: boolean;
@@ -122,7 +174,9 @@ export function AlertsPanel({
     + alerts.overdueMilestones.length
     + alerts.missingBudget.length
     + alerts.unconvertibleMilestones.length
-    + (alerts.unassignedExpenses.count > 0 ? 1 : 0);
+    + (alerts.unassignedExpenses.count > 0 ? 1 : 0)
+    + (alerts.payables.count > 0 ? 1 : 0)
+    + (alerts.overduePayables.count > 0 ? 1 : 0);
 
   const navigateTo = (path: string) => {
     setSelectedAlert(null);
@@ -249,6 +303,36 @@ export function AlertsPanel({
       };
     }
 
+    if (selectedAlert === 'payables') {
+      return {
+        title: 'Gastos por pagar',
+        description: `${alerts.payables.count} compromiso(s) pendientes por ${formatAmount(alerts.payables.amountClp)}${alerts.payables.dueSoonCount > 0 ? `. ${alerts.payables.dueSoonCount} vence(n) en ${PAYABLE_DUE_SOON_DAYS} dias o menos.` : '.'}`,
+        body: (
+          <PayablesTable
+            items={alerts.payables.items}
+            isTruncated={alerts.payables.isTruncated}
+            canOpen={canOpenExpenses}
+            onOpen={() => navigateTo('/gastos/por-pagar')}
+          />
+        ),
+      };
+    }
+
+    if (selectedAlert === 'overduePayables') {
+      return {
+        title: 'Gastos por pagar vencidos',
+        description: `${alerts.overduePayables.count} compromiso(s) por ${formatAmount(alerts.overduePayables.amountClp)} con fecha de compromiso anterior a hoy.`,
+        body: (
+          <PayablesTable
+            items={alerts.overduePayables.items}
+            isTruncated={alerts.overduePayables.isTruncated}
+            canOpen={canOpenExpenses}
+            onOpen={() => navigateTo('/gastos/por-pagar')}
+          />
+        ),
+      };
+    }
+
     return null;
   })();
 
@@ -272,6 +356,8 @@ export function AlertsPanel({
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
+            {alerts.overduePayables.count > 0 && <AlertCard icon={AlertTriangle} title={`${alerts.overduePayables.count} gasto(s) por pagar vencido(s)`} description={`Total vencido: ${formatAmount(alerts.overduePayables.amountClp)}.`} tone="red" onClick={() => setSelectedAlert('overduePayables')} />}
+            {alerts.payables.count > 0 && <AlertCard icon={CalendarClock} title={`${alerts.payables.count} gasto(s) por pagar`} description={`Total: ${formatAmount(alerts.payables.amountClp)}.${alerts.payables.dueSoonCount > 0 ? ` ${alerts.payables.dueSoonCount} vence(n) en ${PAYABLE_DUE_SOON_DAYS} dias o menos.` : ''}`} tone={alerts.payables.dueSoonCount > 0 ? 'red' : 'blue'} onClick={() => setSelectedAlert('payables')} />}
             {alerts.overBudget.length > 0 && <AlertCard icon={TrendingUp} title={`${alerts.overBudget.length} proyecto(s) sobre presupuesto`} description="Revisar desviaciones de gasto." tone="red" onClick={() => setSelectedAlert('overBudget')} />}
             {alerts.overdueMilestones.length > 0 && <AlertCard icon={Clock3} title={`${alerts.overdueMilestones.length} hito(s) vencido(s)`} description="Facturar o gestionar cobro." tone="amber" onClick={() => setSelectedAlert('overdueMilestones')} />}
             {alerts.missingBudget.length > 0 && <AlertCard icon={FolderKanban} title={`${alerts.missingBudget.length} proyecto(s) sin presupuesto`} description="No entran en porcentajes de cartera." tone="slate" onClick={() => setSelectedAlert('missingBudget')} />}

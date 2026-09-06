@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   BarChart3,
+  CalendarClock,
   CalendarDays,
   CircleDollarSign,
   Clock3,
@@ -799,13 +800,20 @@ export default function Reportes() {
           </div>
 
           <TabsContent value="resumen" className="space-y-6">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Cartera total" value={formatAmount(data.summary.portfolioClp)} note={`${data.summary.projectsWithBudget} con presupuesto`} icon={WalletCards} tone="blue" />
               <HistoricalExpensesMetric data={data} />
               <MetricCard label="Margen estimado" value={formatAmount(data.summary.estimatedMarginClp)} note={formatPercentage(data.summary.estimatedMarginPercentage)} icon={TrendingUp} tone={data.summary.estimatedMarginClp < 0 ? 'red' : 'green'} />
               <PaidMilestonesMetric data={data} />
               <MetricCard label="Facturado sin pagar" value={formatAmount(data.summary.invoicedPendingClp)} note="Gestionar cobranza" icon={Clock3} tone="amber" />
               <MetricCard label="Falta por pagar" value={formatAmount(data.summary.toCollectClp)} note={`Por facturar: ${formatAmount(data.summary.toInvoiceClp)}`} icon={AlertTriangle} tone="red" />
+              <MetricCard
+                label="Por pagar"
+                value={formatAmount(data.summary.payablesClp)}
+                note={`${data.summary.payablesCount} compromiso(s) pendientes`}
+                icon={CalendarClock}
+                tone={data.alerts.overduePayables.count > 0 || data.alerts.payables.dueSoonCount > 0 ? 'red' : 'blue'}
+              />
             </div>
             <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
               <CollectionBar data={data} />

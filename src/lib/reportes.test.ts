@@ -130,6 +130,92 @@ describe('buildReportesPortafolio', () => {
     ]);
   });
 
+  it('agrupa los gastos por pagar en vencidos, por vencer en una semana y futuros', () => {
+    const report = buildReportesPortafolio({
+      projects: baseProjects,
+      gastos: [
+        { id: 'gasto-1', fecha: '2026-01-10', montoTotal: 400, proyectoId: 'project-1', categoriaNombre: 'Materiales', empresaNombre: 'Proveedor Uno' },
+      ],
+      gastosPorPagar: [
+        { id: 'pp-vencido', fechaCompromiso: '2026-02-05', montoTotal: 500, proyectoId: 'project-1', categoriaNombre: 'Arriendo', empresaNombre: 'Proveedor Atrasado', facturado: true },
+        { id: 'pp-hoy', fechaCompromiso: '2026-02-10', montoTotal: 100, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Hoy', facturado: true },
+        { id: 'pp-3-dias', fechaCompromiso: '2026-02-13', montoTotal: 200, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Pronto', facturado: false },
+        { id: 'pp-7-dias', fechaCompromiso: '2026-02-17', montoTotal: 300, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Borde', facturado: true },
+        { id: 'pp-8-dias', fechaCompromiso: '2026-02-18', montoTotal: 400, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Futuro', facturado: true },
+        { id: 'pp-otro-anio', fechaCompromiso: '2027-02-13', montoTotal: 900, proyectoId: 'project-1', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor 2027', facturado: true },
+        { id: 'pp-sin-proyecto', fechaCompromiso: '2026-02-13', montoTotal: 700, proyectoId: null, categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Suelto', facturado: true },
+        { id: 'pp-sin-ingresos', fechaCompromiso: '2026-02-13', montoTotal: 800, proyectoId: 'project-3', categoriaNombre: 'Servicios', empresaNombre: 'Proveedor Sin Ingresos', facturado: true },
+      ],
+      filters: { year: '2026', month: 'all', ingresos: 'con_ingresos', proyectoId: 'all' },
+      now: new Date('2026-02-10T12:00:00Z'),
+    });
+
+    expect(report.summary.historicalExpensesClp).toBe(400);
+    expect(report.summary.payablesCount).toBe(7);
+    expect(report.summary.payablesClp).toBe(3000);
+
+    expect(report.alerts.overduePayables.count).toBe(1);
+    expect(report.alerts.overduePayables.amountClp).toBe(500);
+    expect(report.alerts.overduePayables.items[0]).toEqual(expect.objectContaining({
+      id: 'pp-vencido',
+      projectName: 'Proyecto Uno',
+      supplierName: 'Proveedor Atrasado',
+      date: '2026-02-05',
+      daysUntil: -5,
+    }));
+
+    expect(report.alerts.payables.count).toBe(6);
+    expect(report.alerts.payables.amountClp).toBe(2500);
+    expect(report.alerts.payables.dueSoonCount).toBe(5);
+    expect(report.alerts.payables.dueSoonAmountClp).toBe(2100);
+    expect(report.alerts.payables.items.map((payable) => payable.id)).toEqual([
+      'pp-hoy',
+      'pp-sin-ingresos',
+      'pp-sin-proyecto',
+      'pp-3-dias',
+      'pp-7-dias',
+      'pp-8-dias',
+    ]);
+    expect(report.alerts.payables.items.map((payable) => payable.daysUntil)).toEqual([0, 3, 3, 3, 7, 8]);
+    expect(report.alerts.payables.isTruncated).toBe(false);
+  });
+
+  it('incluye compromisos de proyectos sin ingresos y sin proyecto asignado', () => {
+    const payablesFixture = [
+      { id: 'pp-sin-ingresos', fechaCompromiso: '2026-02-13', montoTotal: 800, proyectoId: 'project-3', empresaNombre: 'Proveedor Sin Ingresos', facturado: true },
+      { id: 'pp-sin-proyecto', fechaCompromiso: '2026-02-13', montoTotal: 700, proyectoId: null, empresaNombre: 'Proveedor Suelto', facturado: true },
+      { id: 'pp-con-ingresos', fechaCompromiso: '2026-02-13', montoTotal: 200, proyectoId: 'project-1', empresaNombre: 'Proveedor Uno', facturado: true },
+    ];
+    const base = {
+      projects: baseProjects,
+      gastosPorPagar: payablesFixture,
+      now: new Date('2026-02-10T12:00:00Z'),
+    };
+
+    const report = buildReportesPortafolio({
+      ...base,
+      filters: { year: '2026', month: 'all', ingresos: 'con_ingresos', proyectoId: 'all' },
+    });
+
+    // El filtro de ingresos deja fuera project-3 del resto del dashboard...
+    expect(report.projects.some((project) => project.id === 'project-3')).toBe(false);
+    // ...pero su compromiso sigue siendo deuda y debe aparecer igual.
+    expect(report.summary.payablesCount).toBe(3);
+    expect(report.summary.payablesClp).toBe(1700);
+    expect(report.alerts.payables.items.find((payable) => payable.id === 'pp-sin-proyecto')?.projectName)
+      .toBe('Sin proyecto');
+    expect(report.alerts.payables.items.find((payable) => payable.id === 'pp-sin-ingresos')?.projectName)
+      .toBe('Proyecto Sin Ingresos');
+
+    // Seleccionar un proyecto concreto si acota los compromisos.
+    const soloProject1 = buildReportesPortafolio({
+      ...base,
+      filters: { year: '2026', month: 'all', ingresos: 'con_ingresos', proyectoId: 'project-1' },
+    });
+
+    expect(soloProject1.alerts.payables.items.map((payable) => payable.id)).toEqual(['pp-con-ingresos']);
+  });
+
   it('filtra por configuracion de ingresos sin inferirla desde el presupuesto', () => {
     const conIngresos = buildReportesPortafolio({
       projects: baseProjects,
