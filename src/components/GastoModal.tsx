@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Gasto, Proyecto, Empresa } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
@@ -22,7 +23,8 @@ import {
   resolveEmpresaMatch as resolveExtractedEmpresaMatch,
   resolveTipoDocumentoId as resolveExtractedTipoDocumentoId,
 } from '@/lib/gasto-document';
-import { toDateOnly, todayDateOnly } from '@/lib/date-format';
+import { parseDateOnly, toDateOnly, todayDateOnly } from '@/lib/date-format';
+import { addDays, format } from 'date-fns';
 
 type CategoriaOption = {
   id: string;
@@ -58,6 +60,7 @@ interface GastoModalProps {
   allowCreateProyecto?: boolean;
   allowCreateEmpresa?: boolean;
   allowCreateCategoria?: boolean;
+  mode?: 'gasto' | 'compromiso';
 }
 
 export function GastoModal({
@@ -76,7 +79,9 @@ export function GastoModal({
   allowCreateProyecto = true,
   allowCreateEmpresa = true,
   allowCreateCategoria = true,
+  mode = 'gasto',
 }: GastoModalProps) {
+  const esCompromiso = mode === 'compromiso';
   const [fecha, setFecha] = useState(todayDateOnly());
   const [categoria, setCategoria] = useState('');
   const [tipoDocumento, setTipoDocumento] = useState('');
@@ -89,6 +94,12 @@ export function GastoModal({
   const [montoTotal, setMontoTotal] = useState('');
   const [detalle, setDetalle] = useState('');
   const [comentarioTipoDocumento, setComentarioTipoDocumento] = useState('');
+  const [fechaCompromiso, setFechaCompromiso] = useState('');
+  const [fechaPago, setFechaPago] = useState('');
+  const [plazoPago, setPlazoPago] = useState<'' | '30' | '60' | '90'>('');
+  const [facturado, setFacturado] = useState(true);
+  const [pagado, setPagado] = useState(false);
+  const [invoiceConfirmationOpen, setInvoiceConfirmationOpen] = useState(false);
   const [proyectoModalOpen, setProyectoModalOpen] = useState(false);
   const [empresaModalOpen, setEmpresaModalOpen] = useState(false);
   const [categoriaModalOpen, setCategoriaModalOpen] = useState(false);
@@ -254,6 +265,11 @@ export function GastoModal({
       setDetalle(gasto.detalle || '');
       setComentarioTipoDocumento(gasto.comentarioTipoDocumento || '');
       setArchivosAdjuntos(gasto.archivosAdjuntos ? [...gasto.archivosAdjuntos] : []);
+      setFechaCompromiso(toDateOnly(gasto.fechaCompromiso) || '');
+      setFechaPago(toDateOnly(gasto.fechaPago) || '');
+      setPlazoPago('');
+      setFacturado(gasto.facturado !== false);
+      setPagado(gasto.pagado === true);
       setEmpresaMatchInfo(null);
     } else {
       setFecha(todayDateOnly());
@@ -269,10 +285,16 @@ export function GastoModal({
       setDetalle('');
       setComentarioTipoDocumento('');
       setArchivosAdjuntos([]);
+      setFechaCompromiso('');
+      setFechaPago('');
+      setPlazoPago('');
+      setFacturado(true);
+      setPagado(false);
       setFiltroCategoriaEmpresa('all');
       setBusquedaEmpresa('');
       setEmpresaMatchInfo(null);
     }
+    setInvoiceConfirmationOpen(false);
   }, [categoriasOrdenadas, clearLocalPreview, gasto, open]);
 
   useEffect(() => {
@@ -302,9 +324,13 @@ export function GastoModal({
     }
   }, [filtroCategoriaEmpresa, todasLasEmpresas, empresaId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const aplicarPlazoPago = (baseFecha: string, plazo: string) => {
+    const base = parseDateOnly(baseFecha);
+    if (!base) return;
+    setFechaPago(format(addDays(base, Number(plazo)), 'yyyy-MM-dd'));
+  };
 
+  const submitGasto = async (facturadoOverride?: boolean) => {
     if (isSaving) {
       return;
     }
@@ -321,14 +347,19 @@ export function GastoModal({
     const montoNetoValue = aplicaImpuesto && Number.isFinite(montoNetoParsed) ? montoNetoParsed : undefined;
     const ivaValue = aplicaImpuesto && Number.isFinite(montoIvaParsed) ? montoIvaParsed : undefined;
     const numeroDocumentoValue = numeroDocumento.trim().toUpperCase();
+    // Compromiso sin tipo: se auto-resuelve el tipo "SIN DOCUMENTO" del lookup.
+    const tipoDocumentoValue =
+      tipoDocumento || (esCompromiso ? resolveTipoDocumentoId('SIN DOCUMENTO') : '');
     const validationErrors = [
-      !fecha.trim() ? 'Fecha' : null,
+      !esCompromiso && !fecha.trim() ? 'Fecha' : null,
       !categoria ? 'Categoria' : null,
-      !tipoDocumento ? 'Tipo de documento' : null,
+      !tipoDocumentoValue ? 'Tipo de documento' : null,
       !empresaId ? 'Empresa' : null,
-      !numeroDocumentoValue ? 'Numero de documento' : null,
+      !esCompromiso && !numeroDocumentoValue ? 'Numero de documento' : null,
       montoTotalValue <= 0 ? 'Monto total' : null,
       esOtros && !comentarioTipoDocumento.trim() ? 'Especificar tipo de documento' : null,
+      esCompromiso && !fechaCompromiso.trim() ? 'Fecha compromiso' : null,
+      esCompromiso && !fechaPago.trim() ? 'Fecha pago' : null,
     ].filter((item): item is string => Boolean(item));
 
     if (validationErrors.length > 0) {
@@ -340,12 +371,19 @@ export function GastoModal({
       return;
     }
 
+    if (esCompromiso && facturadoOverride === undefined && pagado && !facturado) {
+      setInvoiceConfirmationOpen(true);
+      return;
+    }
+
+    const facturadoValue = facturadoOverride === undefined ? facturado : facturadoOverride;
+
     setIsSaving(true);
     try {
       await onSave({
         fecha,
         categoria,
-        tipoDocumento,
+        tipoDocumento: tipoDocumentoValue,
         numeroDocumento: numeroDocumentoValue,
         empresaId,
         proyectoId: proyectoId || undefined,
@@ -356,10 +394,31 @@ export function GastoModal({
         detalle,
         comentarioTipoDocumento: esOtros && comentarioTipoDocumento ? comentarioTipoDocumento : undefined,
         archivosAdjuntos: archivosAdjuntos.length > 0 ? archivosAdjuntos : undefined,
+        ...(esCompromiso
+          ? {
+              // Sin campo Fecha propio en compromiso: la fecha del gasto es la fecha compromiso.
+              fecha: fechaCompromiso,
+              fechaCompromiso,
+              fechaPago,
+              facturado: facturadoValue,
+              pagado,
+            }
+          : {}),
       });
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitGasto();
+  };
+
+  const handleInvoiceDecision = (facturadoValue: boolean) => {
+    setFacturado(facturadoValue);
+    setInvoiceConfirmationOpen(false);
+    void submitGasto(facturadoValue);
   };
 
   const handleSaveProyecto = async (nuevoProyecto: Omit<Proyecto, 'id' | 'createdAt'>) => {
@@ -446,6 +505,10 @@ export function GastoModal({
 
     setArchivosAdjuntos((prev) => [...prev, ...nuevosArchivos]);
 
+    if (esCompromiso) {
+      return;
+    }
+
     const fileToExtract = files.find(isExtractableDocument);
     if (!fileToExtract) {
       return;
@@ -465,7 +528,7 @@ export function GastoModal({
     } finally {
       setIsExtractingDocument(false);
     }
-  }, [applyExtractedDocumentData]);
+  }, [applyExtractedDocumentData, esCompromiso]);
 
   const handleAttachmentInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -501,7 +564,9 @@ export function GastoModal({
         <DialogContent className="sm:max-w-lg bg-card">
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold">
-              {gasto ? 'Editar Gasto' : 'Nuevo Gasto'}
+              {esCompromiso
+                ? (gasto ? 'Editar Gasto por Pagar' : 'Nuevo Gasto por Pagar')
+                : (gasto ? 'Editar Gasto' : 'Nuevo Gasto')}
               {nombreRegistrador && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
                   ({nombreRegistrador})
@@ -509,7 +574,9 @@ export function GastoModal({
               )}
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Formulario para registrar gastos y adjuntar documentos para extraer datos automaticamente.
+              {esCompromiso
+                ? 'Formulario para registrar compromisos de pago futuros con sus documentos adjuntos.'
+                : 'Formulario para registrar gastos y adjuntar documentos para extraer datos automaticamente.'}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4 mt-4">
@@ -542,24 +609,26 @@ export function GastoModal({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2 min-w-0">
-                <Label htmlFor="fecha">Fecha *</Label>
-                <Input
-                  id="fecha"
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                  required
-                  className="w-full h-10 min-w-0"
-                  style={{
-                    WebkitAppearance: 'none',
-                    appearance: 'none',
-                    minWidth: 0,
-                    maxWidth: '100%',
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
+              {!esCompromiso && (
+                <div className="space-y-2 min-w-0">
+                  <Label htmlFor="fecha">Fecha *</Label>
+                  <Input
+                    id="fecha"
+                    type="date"
+                    value={fecha}
+                    onChange={(e) => setFecha(e.target.value)}
+                    required
+                    className="w-full h-10 min-w-0"
+                    style={{
+                      WebkitAppearance: 'none',
+                      appearance: 'none',
+                      minWidth: 0,
+                      maxWidth: '100%',
+                    }}
+                  />
+                </div>
+              )}
+              <div className={esCompromiso ? 'space-y-2 sm:col-span-2' : 'space-y-2'}>
                 <Label htmlFor="categoria">Categoria *</Label>
                 <div className="flex gap-2">
                   <Select value={String(categoria)} onValueChange={(value) => setCategoria(value)} required>
@@ -594,35 +663,47 @@ export function GastoModal({
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="tipoDocumento">Tipo de Documento *</Label>
-              <Select
-                value={tipoDocumento || undefined}
-                onValueChange={(value) => setTipoDocumento(value)}
-                required
-              >
-                <SelectTrigger className="bg-card" id="tipoDocumento">
-                  <SelectValue placeholder="Seleccionar documento" />
-                </SelectTrigger>
-                <SelectContent className="bg-card">
-                  {tiposDocumentoOrdenados.length > 0 ? (
-                    tiposDocumentoOrdenados.map((tipo) => (
-                      <SelectItem key={tipo.id} value={tipo.id}>
-                        {tipo.nombre}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2 min-w-0">
+                <Label htmlFor="tipoDocumento">Tipo de Documento{esCompromiso ? '' : ' *'}</Label>
+                <Select
+                  value={tipoDocumento || undefined}
+                  onValueChange={(value) => setTipoDocumento(value)}
+                  required={!esCompromiso}
+                >
+                  <SelectTrigger className="bg-card" id="tipoDocumento">
+                    <SelectValue placeholder="Seleccionar documento" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-card">
+                    {tiposDocumentoOrdenados.length > 0 ? (
+                      tiposDocumentoOrdenados.map((tipo) => (
+                        <SelectItem key={tipo.id} value={tipo.id}>
+                          {tipo.nombre}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="sin-documentos" disabled>
+                        No hay tipos de documento disponibles
                       </SelectItem>
-                    ))
-                  ) : (
-                    <SelectItem value="sin-documentos" disabled>
-                      No hay tipos de documento disponibles
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2 min-w-0">
+                <Label htmlFor="numeroDocumento">Numero de Documento{esCompromiso ? '' : ' *'}</Label>
+                <Input
+                  id="numeroDocumento"
+                  placeholder="Ej: 001234"
+                  value={numeroDocumento}
+                  onChange={(e) => setNumeroDocumento(e.target.value.toUpperCase())}
+                  required={!esCompromiso}
+                />
+              </div>
               {(() => {
                 const nombreNormalizado = tipoDocumentoSeleccionado?.nombre?.toLowerCase() || '';
                 const esOtros = nombreNormalizado === 'otros' || nombreNormalizado === 'otro';
                 return esOtros && (
-                  <div className="space-y-2 pt-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="comentarioTipoDocumento">Especificar tipo de documento *</Label>
                     <Input
                       id="comentarioTipoDocumento"
@@ -635,19 +716,6 @@ export function GastoModal({
                   </div>
                 );
               })()}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="numeroDocumento">Numero de Documento *</Label>
-                <Input
-                  id="numeroDocumento"
-                  placeholder="Ej: 001234"
-                  value={numeroDocumento}
-                  onChange={(e) => setNumeroDocumento(e.target.value.toUpperCase())}
-                  required
-                />
-              </div>
             </div>
 
             <div className="space-y-2">
@@ -804,7 +872,7 @@ export function GastoModal({
                 <Paperclip size={14} />
                 <span>Arrastra imagenes o documentos aqui</span>
               </div>
-              {aplicaImpuesto && (
+              {!esCompromiso && aplicaImpuesto && (
                 <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
                   <div className="flex justify-between items-center text-sm pt-2 border-t">
                     <span className="font-semibold">Monto Total:</span>
@@ -834,7 +902,19 @@ export function GastoModal({
                   )}
                 </div>
               )}
-              {!aplicaImpuesto && monto && (
+              {esCompromiso && monto && (
+                <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
+                  <div className="flex justify-between items-center text-sm pt-2 border-t">
+                    <span className="font-semibold">Monto Total:</span>
+                    <span className="font-bold text-lg">
+                      {Number.isFinite(montoValue) && montoValue > 0
+                        ? montoValue.toLocaleString('es-CL')
+                        : '0'} CLP
+                    </span>
+                  </div>
+                </div>
+              )}
+              {!esCompromiso && !aplicaImpuesto && monto && (
                 <div className="mt-3 space-y-2 rounded-lg border bg-muted/30 p-3">
                   <div className="flex justify-between items-center text-sm pt-2 border-t">
                     <span className="font-semibold">Monto Total:</span>
@@ -893,6 +973,88 @@ export function GastoModal({
                 style={{ textTransform: 'uppercase' }}
               />
             </div>
+
+            {esCompromiso && (
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center h-8">
+                      <Label htmlFor="fechaCompromiso">Fecha Compromiso *</Label>
+                    </div>
+                    <Input
+                      id="fechaCompromiso"
+                      type="date"
+                      value={fechaCompromiso}
+                      onChange={(e) => {
+                        setFechaCompromiso(e.target.value);
+                        if (plazoPago && e.target.value) {
+                          aplicarPlazoPago(e.target.value, plazoPago);
+                        }
+                      }}
+                      required
+                      className="w-full h-10 min-w-0"
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center justify-between h-8">
+                      <Label htmlFor="fechaPago">Fecha Pago *</Label>
+                      <ToggleGroup
+                        type="single"
+                        value={plazoPago}
+                        onValueChange={(value) => {
+                          const plazo = (value || '') as '' | '30' | '60' | '90';
+                          setPlazoPago(plazo);
+                          if (plazo && fechaCompromiso) {
+                            aplicarPlazoPago(fechaCompromiso, plazo);
+                          }
+                        }}
+                      >
+                        <ToggleGroupItem value="30" aria-label="30 dias" className="text-xs px-2 py-1 h-7 data-[state=on]:bg-muted">30d</ToggleGroupItem>
+                        <ToggleGroupItem value="60" aria-label="60 dias" className="text-xs px-2 py-1 h-7 data-[state=on]:bg-muted">60d</ToggleGroupItem>
+                        <ToggleGroupItem value="90" aria-label="90 dias" className="text-xs px-2 py-1 h-7 data-[state=on]:bg-muted">90d</ToggleGroupItem>
+                      </ToggleGroup>
+                    </div>
+                    <Input
+                      id="fechaPago"
+                      type="date"
+                      value={fechaPago}
+                      onChange={(e) => {
+                        setFechaPago(e.target.value);
+                        setPlazoPago('');
+                      }}
+                      required
+                      className="w-full h-10 min-w-0"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="flex items-center gap-2 rounded-md border p-3">
+                    <Checkbox
+                      id="facturado"
+                      checked={facturado}
+                      onCheckedChange={(checked) => setFacturado(Boolean(checked))}
+                    />
+                    <Label htmlFor="facturado" className="cursor-pointer">Facturado</Label>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-md border p-3">
+                    <Checkbox
+                      id="pagado"
+                      checked={pagado}
+                      onCheckedChange={(checked) => {
+                        const value = Boolean(checked);
+                        setPagado(value);
+                        if (value && !fechaPago) {
+                          setFechaPago(todayDateOnly());
+                          setPlazoPago('');
+                        }
+                      }}
+                    />
+                    <Label htmlFor="pagado" className="cursor-pointer">Pagado</Label>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="flex justify-end gap-3 pt-4 border-t">
               <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
@@ -970,6 +1132,25 @@ export function GastoModal({
         }}
         archivo={selectedPreviewFile}
       />
+
+      <Dialog open={invoiceConfirmationOpen} onOpenChange={setInvoiceConfirmationOpen}>
+        <DialogContent className="bg-card sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar estado de facturacion</DialogTitle>
+            <DialogDescription>
+              Este gasto esta marcado como pagado, pero no como facturado. Confirma si la factura fue generada antes de guardar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" variant="outline" onClick={() => handleInvoiceDecision(false)}>
+              No, pagado sin factura
+            </Button>
+            <Button type="button" onClick={() => handleInvoiceDecision(true)}>
+              Si, fue facturado
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -876,6 +876,31 @@ export const postgresApi = {
       method: 'DELETE',
     });
   },
+
+  getGastosPorPagar() {
+    return request<Gasto[]>('/api/gastos/por-pagar');
+  },
+
+  createGastoPorPagar(gasto: Omit<Gasto, 'id'>) {
+    return request<Gasto>('/api/gastos/por-pagar', {
+      method: 'POST',
+      body: buildGastoFormData(gasto),
+    });
+  },
+
+  updateGastoPorPagar(id: string, gasto: Omit<Gasto, 'id'>) {
+    return request<Gasto>(`/api/gastos/por-pagar/${id}`, {
+      method: 'PUT',
+      body: buildGastoFormData(gasto),
+    });
+  },
+
+  marcarGastoPorPagarPagado(id: string, input: { fechaPago?: string; facturado?: boolean } = {}) {
+    return request<Gasto>(`/api/gastos/por-pagar/${id}/pagar`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  },
 };
 
 export { ApiError };

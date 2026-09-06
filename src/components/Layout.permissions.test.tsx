@@ -23,6 +23,7 @@ describe('Layout con permisos individuales', () => {
 
     expect(screen.getByText('Gestion de Gastos')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Gastos' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Por Pagar' })).toHaveAttribute('href', '/gastos/por-pagar');
     expect(screen.queryByText('Control de Proyectos')).not.toBeInTheDocument();
     expect(screen.queryByText('Control de Asistencia')).not.toBeInTheDocument();
 

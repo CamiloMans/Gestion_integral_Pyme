@@ -207,7 +207,7 @@ export async function ensureCoreSchema() {
         empresa_id uuid not null references dim_empresa(id) on delete restrict,
         categoria_id uuid not null references dim_categoria(id) on delete restrict,
         tipo_documento_id uuid not null references dim_tipo_documento(id) on delete restrict,
-        numero_documento character varying not null check (length(btrim(numero_documento)) > 0),
+        numero_documento character varying not null,
         monto_neto numeric,
         iva numeric,
         monto_total numeric not null check (monto_total > 0),
@@ -215,6 +215,11 @@ export async function ensureCoreSchema() {
         proyecto_id uuid references dim_proyecto(id) on delete set null,
         colaborador_id uuid references dim_colaborador(id) on delete set null,
         comentario_tipo_documento text,
+        origen character varying not null default 'INMEDIATO',
+        fecha_compromiso date,
+        fecha_pago date,
+        facturado boolean not null default true,
+        pagado boolean not null default true,
         created_by uuid references users(id) on delete set null,
         updated_by uuid references users(id) on delete set null,
         created_at timestamp with time zone not null default now(),
@@ -245,6 +250,31 @@ export async function ensureCoreSchema() {
     await query(`
       alter table fct_gasto
       add column if not exists updated_by uuid references users(id) on delete set null
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists origen character varying not null default 'INMEDIATO'
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists fecha_compromiso date
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists fecha_pago date
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists facturado boolean not null default true
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists pagado boolean not null default true
     `);
   })().catch((error) => {
     coreSchemaPromise = null;

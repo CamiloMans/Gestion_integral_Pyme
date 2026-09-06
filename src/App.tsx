@@ -8,6 +8,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppAuthGuard } from "@/components/AppAuthGuard";
 import { AppAuthProvider, useAppAuth } from "@/hooks/useAppAuth";
 import Gastos from "./pages/Gastos";
+import GastosPorPagar from "./pages/GastosPorPagar";
 import GastosCargaMasiva from "./pages/GastosCargaMasiva";
 import Empresas from "./pages/Empresas";
 import NotFound from "./pages/NotFound";
@@ -78,6 +79,7 @@ const AppRoutes = () => {
           <Route path="/sin-acceso" element={<NoAccess />} />
           <Route path="/reportes" element={<PermissionRoute permissions={[PERMISSIONS.REPORTS_DASHBOARD]}><Reportes /></PermissionRoute>} />
           <Route path="/gastos" element={<PermissionRoute permissions={[PERMISSIONS.EXPENSES_RECORDS]}><Gastos /></PermissionRoute>} />
+          <Route path="/gastos/por-pagar" element={<PermissionRoute permissions={[PERMISSIONS.EXPENSES_RECORDS]}><GastosPorPagar /></PermissionRoute>} />
           <Route path="/gastos/carga-masiva" element={<PermissionRoute permissions={[PERMISSIONS.EXPENSES_BULK_UPLOAD]}><GastosCargaMasiva /></PermissionRoute>} />
           <Route path="/empresas" element={<PermissionRoute permissions={SETTINGS_PERMISSIONS}><Empresas /></PermissionRoute>} />
           <Route path="/check-fields" element={<SuperAdminRoute><CheckFields /></SuperAdminRoute>} />

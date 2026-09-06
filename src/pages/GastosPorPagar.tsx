@@ -1,5 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { CategoryBadge } from '@/components/CategoryBadge';
@@ -9,32 +8,36 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare, Plus, Upload } from 'lucide-react';
+import { Search, Pencil, Trash2, FileText, Paperclip, Plus, CheckCircle2 } from 'lucide-react';
 import { DocumentoViewer } from '@/components/DocumentoViewer';
-import { DetalleGastoDialog } from '@/components/DetalleGastoDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { toast } from '@/hooks/use-toast';
 import { postgresApi, type BootstrapResponse, type CategoriaOption, type TipoDocumentoOption } from '@/services/postgresApi';
 import { useAppAuth } from '@/hooks/useAppAuth';
-import { hasPermission, PERMISSIONS } from '@/lib/access-control';
+import { todayDateOnly } from '@/lib/date-format';
 
 const PAGE_SIZE = 50;
 const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
 
-function sortGastosByFechaDesc(items: Gasto[]) {
+function sortGastosPorPagar(items: Gasto[]) {
   const toTime = (value?: string) => {
     const parsed = new Date(value || '').getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
+    return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
   };
 
   return [...items].sort((a, b) => {
-    // Prioriza fecha de creacion (recien cargados arriba); fecha del documento como desempate.
-    const creadoDiff = toTime(b.createdAt) - toTime(a.createdAt);
-    if (creadoDiff !== 0) {
-      return creadoDiff;
+    // Compromisos mas proximos primero; sin fecha compromiso al final.
+    const compromisoDiff = toTime(a.fechaCompromiso) - toTime(b.fechaCompromiso);
+    if (compromisoDiff !== 0) {
+      return compromisoDiff;
     }
-    return toTime(b.fecha) - toTime(a.fecha);
+    const toCreated = (value?: string) => {
+      const parsed = new Date(value || '').getTime();
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    return toCreated(b.createdAt) - toCreated(a.createdAt);
   });
 }
 
@@ -50,10 +53,7 @@ function sortByRazonSocial<T extends { razonSocial: string }>(items: T[]) {
   );
 }
 
-export default function Gastos() {
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const processedGastoIdRef = useRef<string | null>(null);
+export default function GastosPorPagar() {
   const { session } = useAppAuth();
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [gastos, setGastos] = useState<Gasto[]>([]);
@@ -64,21 +64,15 @@ export default function Gastos() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingGasto, setEditingGasto] = useState<Gasto | undefined>();
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategoria, setFilterCategoria] = useState('all');
   const [filterEmpresa, setFilterEmpresa] = useState('all');
-  const [filterTipoDoc, setFilterTipoDoc] = useState('all');
-  const [filterUsuario, setFilterUsuario] = useState('all');
   const [filterProyecto, setFilterProyecto] = useState('all');
-  const [filterMes, setFilterMes] = useState('all');
-  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [documentoViewerOpen, setDocumentoViewerOpen] = useState(false);
   const [documentoSeleccionado, setDocumentoSeleccionado] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
-  const [detalleGastoOpen, setDetalleGastoOpen] = useState(false);
-  const [gastoSeleccionado, setGastoSeleccionado] = useState<Gasto | undefined>();
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [gastoAEliminar, setGastoAEliminar] = useState<string | null>(null);
-  const [confirmTitle, setConfirmTitle] = useState('');
   const [confirmDescription, setConfirmDescription] = useState('');
+  const [gastoAPagar, setGastoAPagar] = useState<Gasto | null>(null);
+  const [payingId, setPayingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   const loadData = useCallback(async () => {
@@ -88,11 +82,11 @@ export default function Gastos() {
     try {
       const [bootstrapResponse, gastosResponse] = await Promise.all([
         postgresApi.getBootstrap(),
-        postgresApi.getGastos(),
+        postgresApi.getGastosPorPagar(),
       ]);
 
       setBootstrap(bootstrapResponse);
-      setGastos(sortGastosByFechaDesc(gastosResponse));
+      setGastos(sortGastosPorPagar(gastosResponse));
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'No se pudo cargar PostgreSQL';
       setError(message);
@@ -240,7 +234,6 @@ export default function Gastos() {
   const proyectosData = useMemo(() => bootstrap?.proyectos || [], [bootstrap]);
   const categoriasData = useMemo<CategoriaOption[]>(() => bootstrap?.categorias || [], [bootstrap]);
   const tiposDocumentoOptions = useMemo<TipoDocumentoOption[]>(() => bootstrap?.tiposDocumento || [], [bootstrap]);
-  const colaboradoresData = useMemo(() => bootstrap?.colaboradores || [], [bootstrap]);
 
   const tiposDocumentoMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -255,27 +248,6 @@ export default function Gastos() {
   const empresasOrdenadas = useMemo(() => {
     return sortByRazonSocial(empresasData);
   }, [empresasData]);
-
-  const colaboradoresOrdenados = useMemo(() => {
-    return [...colaboradoresData].sort((a, b) =>
-      a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' })
-    );
-  }, [colaboradoresData]);
-
-  // Usuarios (creadores) distintos presentes en los gastos, para el filtro por usuario.
-  const usuariosDisponibles = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const gasto of gastos) {
-      const id = (gasto.creadoPor || '').trim();
-      if (!id) continue;
-      if (!map.has(id)) {
-        map.set(id, (gasto.creadoPorNombre || '').trim() || 'Usuario sin nombre');
-      }
-    }
-    return Array.from(map.entries())
-      .map(([id, nombre]) => ({ id, nombre }))
-      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
-  }, [gastos]);
 
   const proyectosOrdenados = useMemo(() => {
     return sortByNombre(proyectosData);
@@ -296,45 +268,19 @@ export default function Gastos() {
       numeroDocStr.includes(searchTerm) ||
       !!gasto.detalle?.toLowerCase().includes(searchTermLower);
 
-    const matchesCategoria = filterCategoria === 'all' || String(gasto.categoria) === String(filterCategoria);
     const matchesEmpresa = filterEmpresa === 'all' || String(gasto.empresaId) === String(filterEmpresa);
-    const matchesTipoDoc = filterTipoDoc === 'all' || String(gasto.tipoDocumento) === String(filterTipoDoc);
-    const matchesColaborador = filterUsuario === 'all' || String(gasto.creadoPor || '') === String(filterUsuario);
     const matchesProyecto = filterProyecto === 'all' || String(gasto.proyectoId || '') === String(filterProyecto);
 
-    let matchesMes = true;
-    if (filterMes !== 'all' && gasto.fecha) {
-      try {
-        const fechaGasto = new Date(gasto.fecha);
-        if (!Number.isNaN(fechaGasto.getTime())) {
-          const mesGasto = `${fechaGasto.getFullYear()}-${String(fechaGasto.getMonth() + 1).padStart(2, '0')}`;
-          matchesMes = mesGasto === filterMes;
-        }
-      } catch {
-        matchesMes = true;
-      }
-    }
-
-    return matchesSearch && matchesCategoria && matchesEmpresa && matchesTipoDoc && matchesColaborador && matchesProyecto && matchesMes;
-  }, [
-    empresasData,
-    proyectosData,
-    searchTerm,
-    filterCategoria,
-    filterEmpresa,
-    filterTipoDoc,
-    filterUsuario,
-    filterProyecto,
-    filterMes,
-  ]);
+    return matchesSearch && matchesEmpresa && matchesProyecto;
+  }, [empresasData, proyectosData, searchTerm, filterEmpresa, filterProyecto]);
 
   const filteredGastos = useMemo(() => {
-    return sortGastosByFechaDesc(gastos.filter(gastoCumpleFiltros));
+    return sortGastosPorPagar(gastos.filter(gastoCumpleFiltros));
   }, [gastos, gastoCumpleFiltros]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterCategoria, filterEmpresa, filterTipoDoc, filterUsuario, filterProyecto, filterMes]);
+  }, [searchTerm, filterEmpresa, filterProyecto]);
 
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageEnd = pageStart + PAGE_SIZE;
@@ -342,108 +288,57 @@ export default function Gastos() {
   const hasPreviousPage = currentPage > 1;
   const hasNextPage = pageEnd < filteredGastos.length;
 
-  const cantidadGastosTexto = `${filteredGastos.length}`;
-
   const nombreRegistradorActual = useMemo(() => {
     if (!editingGasto) {
       return session?.user?.nombre || 'Persona no identificada';
     }
 
-    const nombreDesdeCreador = (editingGasto.creadoPorNombre || '').trim();
-    if (nombreDesdeCreador) {
-      return nombreDesdeCreador;
-    }
-
-    const nombreDesdeGasto = (editingGasto.colaboradorNombre || '').trim();
-    if (nombreDesdeGasto) {
-      return nombreDesdeGasto;
-    }
-
-    const colaborador = colaboradoresData.find(
-      (item) => String(item.id) === String(editingGasto.colaboradorId || '')
-    );
-
-    return colaborador?.nombre || 'Persona no identificada';
-  }, [colaboradoresData, editingGasto, session]);
-
-  const detalleGastoContext = useMemo(() => {
-    if (!gastoSeleccionado) {
-      return null;
-    }
-
-    const empresa = empresasData.find((item) => String(item.id) === String(gastoSeleccionado.empresaId || ''));
-    const proyecto = proyectosData.find((item) => String(item.id) === String(gastoSeleccionado.proyectoId || ''));
-    const categoria = categoriasData.find((item) => String(item.id) === String(gastoSeleccionado.categoria || ''));
-    const tipoDocumento = tiposDocumentoOptions.find((item) => String(item.id) === String(gastoSeleccionado.tipoDocumento || ''));
-    const colaborador = colaboradoresData.find((item) => String(item.id) === String(gastoSeleccionado.colaboradorId || ''));
-
-    return {
-      categoriaNombre: categoria?.nombre,
-      empresaNombre: empresa?.razonSocial,
-      empresaRut: empresa?.rut,
-      proyectoNombre: proyecto?.nombre,
-      proyectoCodigo: proyecto?.codigoProyecto,
-      tipoDocumentoNombre: tipoDocumento?.nombre,
-      registradoPorNombre:
-        gastoSeleccionado.creadoPorNombre ||
-        gastoSeleccionado.colaboradorNombre ||
-        colaborador?.nombre ||
-        'Persona no identificada',
-    };
-  }, [categoriasData, colaboradoresData, empresasData, gastoSeleccionado, proyectosData, tiposDocumentoOptions]);
-
-  const mesesDisponibles = useMemo(() => {
-    const fechas = new Set<string>();
-
-    gastos.forEach((gasto) => {
-      try {
-        const fecha = new Date(gasto.fecha);
-        if (!Number.isNaN(fecha.getTime())) {
-          fechas.add(`${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`);
-        }
-      } catch {
-        return;
-      }
-    });
-
-    return Array.from(fechas)
-      .sort((a, b) => b.localeCompare(a))
-      .map((mesKey) => {
-        const [year, month] = mesKey.split('-').map(Number);
-        const fecha = new Date(year, month - 1, 1);
-        const mesLabel = fecha.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
-
-        return {
-          key: mesKey,
-          label: mesLabel.charAt(0).toUpperCase() + mesLabel.slice(1),
-        };
-      });
-  }, [gastos]);
+    return (editingGasto.creadoPorNombre || '').trim() || 'Persona no identificada';
+  }, [editingGasto, session]);
 
   const handleSaveGasto = async (newGasto: Omit<Gasto, 'id'>) => {
     setLoadingSave(true);
 
     try {
       if (editingGasto) {
-        const actualizado = await postgresApi.updateGasto(editingGasto.id, newGasto);
-        setGastos((prev) => sortGastosByFechaDesc([
-          ...prev.filter((item) => item.id !== actualizado.id),
-          actualizado,
-        ]));
-        toast({
-          title: 'Gasto actualizado',
-          description: 'El gasto se actualizo correctamente en PostgreSQL.',
-          variant: 'success',
-        });
+        const actualizado = await postgresApi.updateGastoPorPagar(editingGasto.id, newGasto);
+
+        if (actualizado.pagado) {
+          setGastos((prev) => prev.filter((item) => item.id !== actualizado.id));
+          toast({
+            title: 'Gasto pagado',
+            description: 'El gasto se marco como pagado y se movio a la lista de Gastos.',
+            variant: 'success',
+          });
+        } else {
+          setGastos((prev) => sortGastosPorPagar([
+            ...prev.filter((item) => item.id !== actualizado.id),
+            actualizado,
+          ]));
+          toast({
+            title: 'Gasto por pagar actualizado',
+            description: 'El gasto por pagar se actualizo correctamente en PostgreSQL.',
+            variant: 'success',
+          });
+        }
       } else {
-        const creado = await postgresApi.createGasto(newGasto);
-        setGastos((prev) => sortGastosByFechaDesc([creado, ...prev]));
-        setCurrentPage(1);
-        toast({
-          title: 'Gasto guardado',
-          description: 'El gasto se guardo correctamente en PostgreSQL.',
-          variant: 'success',
-        });
+        const creado = await postgresApi.createGastoPorPagar(newGasto);
+
+        if (creado.pagado) {
+          toast({
+            title: 'Gasto pagado',
+            description: 'El gasto se registro como pagado y quedo en la lista de Gastos.',
+            variant: 'success',
+          });
+        } else {
+          setGastos((prev) => sortGastosPorPagar([creado, ...prev]));
+          setCurrentPage(1);
+          toast({
+            title: 'Gasto por pagar guardado',
+            description: 'El compromiso de pago se guardo correctamente en PostgreSQL.',
+            variant: 'success',
+          });
+        }
       }
 
       setEditingGasto(undefined);
@@ -451,7 +346,7 @@ export default function Gastos() {
     } catch (saveError) {
       toast({
         title: 'Error',
-        description: saveError instanceof Error ? saveError.message : 'Error al guardar el gasto',
+        description: saveError instanceof Error ? saveError.message : 'Error al guardar el gasto por pagar',
         variant: 'destructive',
       });
     } finally {
@@ -464,33 +359,51 @@ export default function Gastos() {
     setModalOpen(true);
   };
 
-  const handleViewGasto = (gasto: Gasto) => {
-    setGastoSeleccionado(gasto);
-    setDetalleGastoOpen(true);
+  const marcarPagado = async (gasto: Gasto, facturadoOverride?: boolean) => {
+    if (payingId) {
+      return;
+    }
+
+    setPayingId(gasto.id);
+
+    try {
+      await postgresApi.marcarGastoPorPagarPagado(gasto.id, {
+        fechaPago: todayDateOnly(),
+        ...(facturadoOverride === undefined ? {} : { facturado: facturadoOverride }),
+      });
+
+      setGastos((prev) => prev.filter((item) => item.id !== gasto.id));
+      toast({
+        title: 'Gasto pagado',
+        description: 'El gasto se marco como pagado y se movio a la lista de Gastos.',
+        variant: 'success',
+      });
+    } catch (payError) {
+      toast({
+        title: 'Error',
+        description: payError instanceof Error ? payError.message : 'Error al marcar el gasto como pagado',
+        variant: 'destructive',
+      });
+    } finally {
+      setPayingId(null);
+    }
   };
 
-  useEffect(() => {
-    const gastoId = searchParams.get('gastoId');
-    if (!gastoId || loading || processedGastoIdRef.current === gastoId) {
+  const handleMarcarPagado = (gasto: Gasto) => {
+    if (!gasto.facturado) {
+      setGastoAPagar(gasto);
       return;
     }
 
-    processedGastoIdRef.current = gastoId;
-    const gasto = gastos.find((item) => String(item.id) === gastoId);
+    void marcarPagado(gasto);
+  };
+
+  const handleInvoiceDecision = (facturado: boolean) => {
+    const gasto = gastoAPagar;
+    setGastoAPagar(null);
     if (gasto) {
-      handleViewGasto(gasto);
+      void marcarPagado(gasto, facturado);
     }
-  }, [gastos, loading, searchParams]);
-
-  const handleEditFromDetail = () => {
-    if (!gastoSeleccionado) {
-      return;
-    }
-
-    const gasto = gastoSeleccionado;
-    setDetalleGastoOpen(false);
-    setGastoSeleccionado(undefined);
-    handleEdit(gasto);
   };
 
   const handleDelete = (id: string) => {
@@ -504,13 +417,11 @@ export default function Gastos() {
       const detalle = gasto.detalle || 'Sin detalle';
       const nombreEmpresa = empresa?.razonSocial || EMPRESA_NO_INFORMADA_LABEL;
 
-      setConfirmTitle('Eliminar gasto');
       setConfirmDescription(
-        `Estas seguro de que deseas eliminar el gasto de "${nombreEmpresa}" por ${formatCurrency(montoTotal)} (${detalle})? Esta accion no se puede deshacer.`
+        `Estas seguro de que deseas eliminar el gasto por pagar de "${nombreEmpresa}" por ${formatCurrency(montoTotal)} (${detalle})? Esta accion no se puede deshacer.`
       );
     } else {
-      setConfirmTitle('Eliminar gasto');
-      setConfirmDescription('Estas seguro de que deseas eliminar este gasto? Esta accion no se puede deshacer.');
+      setConfirmDescription('Estas seguro de que deseas eliminar este gasto por pagar? Esta accion no se puede deshacer.');
     }
 
     setGastoAEliminar(id);
@@ -530,14 +441,14 @@ export default function Gastos() {
       await postgresApi.deleteGasto(gastoAEliminar);
       setGastos((prev) => prev.filter((item) => item.id !== gastoAEliminar));
       toast({
-        title: 'Gasto eliminado',
-        description: `El gasto de "${nombreEmpresa}" se ha eliminado correctamente`,
+        title: 'Gasto por pagar eliminado',
+        description: `El gasto por pagar de "${nombreEmpresa}" se ha eliminado correctamente`,
         variant: 'success',
       });
     } catch (deleteError) {
       toast({
         title: 'Error',
-        description: deleteError instanceof Error ? deleteError.message : 'Error al eliminar el gasto',
+        description: deleteError instanceof Error ? deleteError.message : 'Error al eliminar el gasto por pagar',
         variant: 'destructive',
       });
     } finally {
@@ -548,21 +459,15 @@ export default function Gastos() {
   return (
     <Layout onNewGasto={() => setModalOpen(true)}>
       <PageHeader
-        title="Gastos"
+        title="Gastos por Pagar"
         subtitle={
           loading
-            ? 'Cargando gastos desde PostgreSQL...'
-            : `${cantidadGastosTexto} gastos encontrados`
+            ? 'Cargando gastos por pagar desde PostgreSQL...'
+            : `${filteredGastos.length} gastos por pagar encontrados`
         }
         actions={[
-          ...(hasPermission(session, PERMISSIONS.EXPENSES_BULK_UPLOAD) ? [{
-            label: 'Carga masiva',
-            onClick: () => navigate('/gastos/carga-masiva'),
-            icon: <Upload size={18} />,
-            variant: 'outline' as const,
-          }] : []),
           {
-            label: 'Nuevo Gasto',
+            label: 'Nuevo Pago pendiente',
             onClick: () => setModalOpen(true),
             icon: <Plus size={18} />,
           },
@@ -570,107 +475,41 @@ export default function Gastos() {
       />
 
       <div className="bg-card rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 shadow-sm border border-border">
-        <div className="flex items-center gap-2 mb-3 sm:mb-4">
-          <div className="relative flex-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
             <Input
-              placeholder="Buscar gasto..."
+              placeholder="Buscar gasto por pagar..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
             />
           </div>
-          <button
-            onClick={() => setFiltrosAbiertos(!filtrosAbiertos)}
-            className={`flex items-center gap-2 px-3 py-2 h-10 rounded-md transition-colors whitespace-nowrap ${
-              filtrosAbiertos
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                : 'bg-muted/50 hover:bg-muted'
-            }`}
-          >
-            <Filter size={16} className={filtrosAbiertos ? 'text-primary-foreground' : 'text-muted-foreground'} />
-            <span className={`font-medium text-sm ${filtrosAbiertos ? 'text-primary-foreground' : 'text-foreground'}`}>Filtros</span>
-          </button>
+
+          <Select value={filterEmpresa} onValueChange={setFilterEmpresa}>
+            <SelectTrigger className="bg-card">
+              <SelectValue placeholder="Todas las empresas" />
+            </SelectTrigger>
+            <SelectContent className="bg-card">
+              <SelectItem value="all">Todas las empresas</SelectItem>
+              {empresasOrdenadas.map((emp) => (
+                <SelectItem key={emp.id} value={emp.id}>{emp.razonSocial}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={filterProyecto} onValueChange={setFilterProyecto}>
+            <SelectTrigger className="bg-card">
+              <SelectValue placeholder="Todos los proyectos" />
+            </SelectTrigger>
+            <SelectContent className="bg-card">
+              <SelectItem value="all">Todos los proyectos</SelectItem>
+              {proyectosOrdenados.map((proyecto) => (
+                <SelectItem key={proyecto.id} value={proyecto.id}>{proyecto.nombre}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        {filtrosAbiertos && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 sm:gap-3 animate-fade-in">
-            <Select value={filterCategoria} onValueChange={setFilterCategoria}>
-              <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todas las categorias" />
-              </SelectTrigger>
-              <SelectContent className="bg-card">
-                <SelectItem value="all">Todas las categorias</SelectItem>
-                {categoriasData.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id}>{cat.nombre}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filterEmpresa} onValueChange={setFilterEmpresa}>
-              <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todas las empresas" />
-              </SelectTrigger>
-              <SelectContent className="bg-card">
-                <SelectItem value="all">Todas las empresas</SelectItem>
-                {empresasOrdenadas.map((emp) => (
-                  <SelectItem key={emp.id} value={emp.id}>{emp.razonSocial}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filterProyecto} onValueChange={setFilterProyecto}>
-              <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todos los proyectos" />
-              </SelectTrigger>
-              <SelectContent className="bg-card">
-                <SelectItem value="all">Todos los proyectos</SelectItem>
-                {proyectosOrdenados.map((proyecto) => (
-                  <SelectItem key={proyecto.id} value={proyecto.id}>{proyecto.nombre}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filterTipoDoc} onValueChange={setFilterTipoDoc}>
-              <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todos los tipos" />
-              </SelectTrigger>
-              <SelectContent className="bg-card">
-                <SelectItem value="all">Todos los tipos</SelectItem>
-                {tiposDocumentoOptions.map((tipo) => (
-                  <SelectItem key={tipo.id} value={String(tipo.id)}>
-                    {tipo.nombre}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filterUsuario} onValueChange={setFilterUsuario}>
-              <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todos los usuarios" />
-              </SelectTrigger>
-              <SelectContent className="bg-card">
-                <SelectItem value="all">Todos los usuarios</SelectItem>
-                {usuariosDisponibles.map((usuario) => (
-                  <SelectItem key={usuario.id} value={usuario.id}>
-                    {usuario.nombre}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={filterMes} onValueChange={setFilterMes}>
-              <SelectTrigger className="bg-card">
-                <SelectValue placeholder="Todos los meses" />
-              </SelectTrigger>
-              <SelectContent className="bg-card">
-                <SelectItem value="all">Todos los meses</SelectItem>
-                {mesesDisponibles.map((mes) => (
-                  <SelectItem key={mes.key} value={mes.key}>{mes.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
       </div>
 
       <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden">
@@ -683,18 +522,16 @@ export default function Gastos() {
                 <TableHead className="font-semibold">CATEGORIA</TableHead>
                 <TableHead className="font-semibold">EMPRESA</TableHead>
                 <TableHead className="font-semibold">DOCUMENTO</TableHead>
-                <TableHead className="font-semibold text-right">MONTO NETO</TableHead>
-                <TableHead className="font-semibold text-right">IVA</TableHead>
                 <TableHead className="font-semibold text-right">MONTO TOTAL</TableHead>
-                <TableHead className="font-semibold text-center">ORIGEN</TableHead>
+                <TableHead className="font-semibold">F. COMPROMISO</TableHead>
+                <TableHead className="font-semibold text-center">ESTADO</TableHead>
                 <TableHead className="font-semibold text-center">ACCIONES</TableHead>
-                <TableHead className="font-semibold">FECHA</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-8">
+                  <TableCell colSpan={9} className="text-center py-8">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                       <span className="text-muted-foreground">Conectando con PostgreSQL...</span>
@@ -703,8 +540,8 @@ export default function Gastos() {
                 </TableRow>
               ) : filteredGastos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                    {error ? 'No se pudo cargar la informacion desde PostgreSQL' : 'No se encontraron gastos'}
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    {error ? 'No se pudo cargar la informacion desde PostgreSQL' : 'No se encontraron gastos por pagar'}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -714,21 +551,7 @@ export default function Gastos() {
                     ? proyectosData.find((item) => String(item.id) === String(gasto.proyectoId))
                     : null;
                   return (
-                    <TableRow
-                      key={gasto.id}
-                      className="animate-fade-in cursor-pointer hover:bg-muted/40"
-                      tabIndex={0}
-                      onClick={() => handleViewGasto(gasto)}
-                      onKeyDown={(e) => {
-                        if (e.target !== e.currentTarget) {
-                          return;
-                        }
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleViewGasto(gasto);
-                        }
-                      }}
-                    >
+                    <TableRow key={gasto.id} className="animate-fade-in">
                       <TableCell>
                         <div>
                           <p className="font-medium text-sm">{gasto.creadoPorNombre || 'Sin usuario'}</p>
@@ -770,8 +593,7 @@ export default function Gastos() {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 text-xs gap-1"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
+                                  onClick={() => {
                                     setDocumentoSeleccionado(archivo);
                                     setDocumentoViewerOpen(true);
                                   }}
@@ -794,58 +616,42 @@ export default function Gastos() {
                         )}
                       </TableCell>
                       <TableCell className="text-right font-semibold">
-                        {gasto.montoNeto !== undefined && gasto.montoNeto !== null
-                          ? formatCurrency(gasto.montoNeto)
-                          : formatCurrency(gasto.monto)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {gasto.iva !== undefined && gasto.iva !== null
-                          ? formatCurrency(gasto.iva)
-                          : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
                         {gasto.montoTotal !== undefined && gasto.montoTotal !== null
                           ? formatCurrency(gasto.montoTotal)
                           : formatCurrency(gasto.monto)}
                       </TableCell>
+                      <TableCell>
+                        <p className="text-muted-foreground">
+                          {gasto.fechaCompromiso ? formatDate(gasto.fechaCompromiso) : '-'}
+                        </p>
+                      </TableCell>
                       <TableCell className="text-center">
                         <span
                           className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            gasto.origen === 'COMPROMISO'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-muted text-muted-foreground'
+                            gasto.facturado
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-amber-100 text-amber-800'
                           }`}
                         >
-                          {gasto.origen === 'COMPROMISO' ? 'Comprometido' : 'Inmediato'}
+                          {gasto.facturado ? 'FACTURADO' : 'PENDIENTE'}
                         </span>
-                        {gasto.origen === 'COMPROMISO' && gasto.fechaPago && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Pagado: {formatDate(gasto.fechaPago)}
-                          </p>
-                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-center gap-1">
-                          {gasto.detalle && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleViewGasto(gasto);
-                              }}
-                              title="Ver detalle"
-                            >
-                              <MessageSquare size={16} className="text-blue-500" />
-                            </Button>
-                          )}
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEdit(gasto);
-                            }}
+                            disabled={payingId === gasto.id}
+                            onClick={() => handleMarcarPagado(gasto)}
+                            title="Marcar pagado"
+                          >
+                            <CheckCircle2 size={16} className="text-green-600" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEdit(gasto)}
+                            title="Editar"
                           >
                             <Pencil size={16} />
                           </Button>
@@ -853,18 +659,12 @@ export default function Gastos() {
                             variant="ghost"
                             size="icon"
                             type="button"
-                            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleDelete(gasto.id);
-                            }}
+                            onClick={() => handleDelete(gasto.id)}
+                            title="Eliminar"
                           >
                             <Trash2 size={16} className="text-destructive" />
                           </Button>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <p className="text-muted-foreground">{formatDate(gasto.fecha)}</p>
                       </TableCell>
                     </TableRow>
                   );
@@ -878,7 +678,7 @@ export default function Gastos() {
       {filteredGastos.length > 0 && (
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
-            Pagina {currentPage} | Mostrando {gastosPagina.length} de {cantidadGastosTexto} gastos
+            Pagina {currentPage} | Mostrando {gastosPagina.length} de {filteredGastos.length} gastos por pagar
           </p>
 
           <Pagination className="mx-0 w-auto justify-start sm:justify-end">
@@ -937,6 +737,7 @@ export default function Gastos() {
         allowCreateProyecto
         allowCreateEmpresa
         allowCreateCategoria
+        mode="compromiso"
       />
 
       <DocumentoViewer
@@ -948,27 +749,6 @@ export default function Gastos() {
         archivo={documentoSeleccionado}
       />
 
-      <DetalleGastoDialog
-        open={detalleGastoOpen}
-        onClose={() => {
-          setDetalleGastoOpen(false);
-          setGastoSeleccionado(undefined);
-        }}
-        gasto={gastoSeleccionado}
-        categoriaNombre={detalleGastoContext?.categoriaNombre}
-        empresaNombre={detalleGastoContext?.empresaNombre}
-        empresaRut={detalleGastoContext?.empresaRut}
-        proyectoNombre={detalleGastoContext?.proyectoNombre}
-        proyectoCodigo={detalleGastoContext?.proyectoCodigo}
-        tipoDocumentoNombre={detalleGastoContext?.tipoDocumentoNombre}
-        registradoPorNombre={detalleGastoContext?.registradoPorNombre}
-        onEdit={handleEditFromDetail}
-        onOpenAttachment={(archivo) => {
-          setDocumentoSeleccionado(archivo);
-          setDocumentoViewerOpen(true);
-        }}
-      />
-
       <ConfirmDialog
         open={confirmDialogOpen}
         onOpenChange={(open) => {
@@ -977,12 +757,31 @@ export default function Gastos() {
             setGastoAEliminar(null);
           }
         }}
-        title={confirmTitle || 'Eliminar gasto'}
-        description={confirmDescription || 'Estas seguro de que deseas eliminar este gasto? Esta accion no se puede deshacer.'}
+        title="Eliminar gasto por pagar"
+        description={confirmDescription || 'Estas seguro de que deseas eliminar este gasto por pagar? Esta accion no se puede deshacer.'}
         onConfirm={confirmDelete}
         confirmText="Eliminar"
         cancelText="Cancelar"
       />
+
+      <Dialog open={Boolean(gastoAPagar)} onOpenChange={(open) => { if (!open) setGastoAPagar(null); }}>
+        <DialogContent className="bg-card sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar estado de facturacion</DialogTitle>
+            <DialogDescription>
+              Este gasto no esta marcado como facturado. Confirma si la factura fue generada antes de marcarlo como pagado.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" variant="outline" onClick={() => handleInvoiceDecision(false)}>
+              No, pagado sin factura
+            </Button>
+            <Button type="button" onClick={() => handleInvoiceDecision(true)}>
+              Si, fue facturado
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   BarChart3,
+  CalendarClock,
   ChevronDown,
   Clock3,
   DollarSign,
@@ -26,6 +27,7 @@ interface LayoutProps {
 
 const gastosNavItems = [
   { path: '/gastos', label: 'Gastos', icon: Receipt, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
+  { path: '/gastos/por-pagar', label: 'Por Pagar', icon: CalendarClock, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
   {
     path: '/empresas',
     label: 'Configuracion',

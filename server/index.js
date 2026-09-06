@@ -96,6 +96,7 @@ let controlPagosDocumentosSchemaPromise = null;
 let controlPagosHitoDocumentosSchemaPromise = null;
 let documentosSchemaPromise = null;
 let gastoDocumentosSchemaPromise = null;
+let gastoPorPagarSchemaPromise = null;
 let asistenciaSchemaPromise = null;
 let proyectoIngresosSchemaPromise = null;
 let fusionEmpresasSchemaPromise = null;
@@ -256,6 +257,20 @@ const gastoInputSchema = z.object({
   colaboradorId: optionalUuid,
   comentarioTipoDocumento: z.string().optional().nullable(),
   existingAttachmentIds: z.array(z.string().uuid()).optional().default([]),
+});
+
+const gastoPorPagarInputSchema = gastoInputSchema.extend({
+  fechaCompromiso: requiredTrimmedString('Fecha compromiso', 'Fecha compromiso es obligatoria.').pipe(
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha compromiso debe tener formato YYYY-MM-DD.'),
+  ),
+  fechaPago: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha pago debe tener formato YYYY-MM-DD.').optional().nullable(),
+  facturado: z.boolean().optional().default(true),
+  pagado: z.boolean().optional().default(false),
+});
+
+const gastoPorPagarPagoInputSchema = z.object({
+  fechaPago: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha pago debe tener formato YYYY-MM-DD.').optional().nullable(),
+  facturado: z.boolean().optional().nullable(),
 });
 
 const hitoPagoProyectoInputSchema = z.object({
@@ -1175,6 +1190,11 @@ function mapGasto(row) {
     colaboradorId: row.colaborador_id || undefined,
     colaboradorNombre: row.colaborador_nombre || undefined,
     comentarioTipoDocumento: row.comentario_tipo_documento || undefined,
+    origen: row.origen || 'INMEDIATO',
+    fechaCompromiso: row.fecha_compromiso || undefined,
+    fechaPago: row.fecha_pago || undefined,
+    facturado: row.facturado !== false,
+    pagado: row.pagado !== false,
     createdAt: row.created_at || undefined,
     creadoPor: row.created_by || undefined,
     creadoPorNombre: row.created_by_nombre || undefined,
@@ -1508,6 +1528,66 @@ async function ensureDocumentosSchema() {
   return documentosSchemaPromise;
 }
 
+async function ensureGastoPorPagarSchema() {
+  if (gastoPorPagarSchemaPromise) {
+    return gastoPorPagarSchemaPromise;
+  }
+
+  gastoPorPagarSchemaPromise = (async () => {
+    await query(`
+      alter table fct_gasto
+      add column if not exists origen character varying not null default 'INMEDIATO'
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists fecha_compromiso date
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists fecha_pago date
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists facturado boolean not null default true
+    `);
+
+    await query(`
+      alter table fct_gasto
+      add column if not exists pagado boolean not null default true
+    `);
+
+    await query(`
+      do $$
+      begin
+        if not exists (
+          select 1
+          from pg_constraint
+          where conname = 'chk_fct_gasto_origen'
+            and conrelid = 'fct_gasto'::regclass
+        ) then
+          alter table fct_gasto
+          add constraint chk_fct_gasto_origen
+          check (origen in ('INMEDIATO', 'COMPROMISO')) not valid;
+        end if;
+      end $$;
+    `);
+
+    await query(`
+      create index if not exists idx_fct_gasto_tenant_por_pagar
+      on fct_gasto (tenant_id, fecha_compromiso)
+      where origen = 'COMPROMISO' and pagado = false
+    `);
+  })().catch((error) => {
+    gastoPorPagarSchemaPromise = null;
+    throw error;
+  });
+
+  return gastoPorPagarSchemaPromise;
+}
+
 async function ensureGastoDocumentosSchema() {
   if (gastoDocumentosSchemaPromise) {
     return gastoDocumentosSchemaPromise;
@@ -1515,6 +1595,7 @@ async function ensureGastoDocumentosSchema() {
 
   gastoDocumentosSchemaPromise = (async () => {
     await ensureDocumentosSchema();
+    await ensureGastoPorPagarSchema();
 
     await query(`
       do $$
@@ -1552,9 +1633,13 @@ async function ensureGastoDocumentosSchema() {
           check (tipo_documento_id is not null) not valid;
         end if;
 
-        -- Numero de documento ya no es obligatorio: se elimina el check si existe.
+        -- Numero de documento ya no es obligatorio: se eliminan los checks si existen.
         alter table fct_gasto
         drop constraint if exists chk_fct_gasto_numero_documento_required;
+
+        -- Check inline auto-nombrado creado por el DDL antiguo de local-dev.
+        alter table fct_gasto
+        drop constraint if exists fct_gasto_numero_documento_check;
 
         if not exists (
           select 1
@@ -2315,8 +2400,56 @@ async function fetchGastos(tenantId) {
         on d.tenant_id = g.tenant_id
        and d.id = gd.documento_id
       where g.tenant_id = $1
+        and g.pagado = true
       group by g.id, c.nombre, uc.nombre, uu.nombre
       order by g.created_at desc, g.fecha desc
+    `,
+    [tenantId],
+  );
+
+  return result.rows.map(mapGasto);
+}
+
+async function fetchGastosPorPagar(tenantId) {
+  await ensureGastoDocumentosSchema();
+
+  const result = await query(
+    `
+      select
+        g.*,
+        c.nombre as colaborador_nombre,
+        uc.nombre as created_by_nombre,
+        uu.nombre as updated_by_nombre,
+        coalesce(
+          json_agg(
+            json_build_object(
+              'id', d.id,
+              'nombre', d.nombre_archivo,
+              'url', '/api/documentos/' || d.id || '/contenido',
+              'tipo', d.mime_type
+            )
+            order by gd.created_at asc
+          ) filter (where d.id is not null),
+          '[]'::json
+        ) as archivos_adjuntos
+      from fct_gasto g
+      left join dim_colaborador c
+        on c.id = g.colaborador_id
+      left join users uc
+        on uc.id = g.created_by
+      left join users uu
+        on uu.id = g.updated_by
+      left join ${GASTO_DOCUMENTOS_TABLE} gd
+        on gd.tenant_id = g.tenant_id
+       and gd.gasto_id = g.id
+      left join ${DOCUMENTOS_TABLE} d
+        on d.tenant_id = g.tenant_id
+       and d.id = gd.documento_id
+      where g.tenant_id = $1
+        and g.origen = 'COMPROMISO'
+        and g.pagado = false
+      group by g.id, c.nombre, uc.nombre, uu.nombre
+      order by g.fecha_compromiso asc nulls last, g.created_at desc
     `,
     [tenantId],
   );
@@ -2663,7 +2796,7 @@ async function fetchHitoPagoProyectoById(tenantId, hitoId) {
 }
 
 async function fetchReportesData(tenantId) {
-  await Promise.all([ensureControlPagosHitosSchema(), ensureProyectoIngresosSchema()]);
+  await Promise.all([ensureControlPagosHitosSchema(), ensureProyectoIngresosSchema(), ensureGastoPorPagarSchema()]);
 
   const activeColumn = await getActiveColumnName('dim_proyecto');
   const activeSelect = activeColumn ? `p.${activeColumn}` : 'true';
@@ -2703,6 +2836,7 @@ async function fetchReportesData(tenantId) {
         left join dim_empresa e
           on e.id = g.empresa_id
         where g.tenant_id = $1
+          and g.pagado = true
       `,
       [tenantId],
     ),
@@ -5285,6 +5419,322 @@ app.delete('/api/control-pagos/documentos/:id', async (req, res) => {
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Error al eliminar documento de proyecto',
     });
+  }
+});
+
+// Gastos por pagar: rutas registradas antes que las de gastos para mantener la precedencia del path.
+app.get('/api/gastos/por-pagar', async (_req, res) => {
+  try {
+    const tenant = await getTenant();
+    const gastos = await fetchGastosPorPagar(tenant.id);
+    res.json(gastos);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Error al cargar gastos por pagar',
+    });
+  }
+});
+
+app.post('/api/gastos/por-pagar', maybeHandleMultipartUploads, async (req, res) => {
+  try {
+    const tenant = await getTenant();
+    await ensureGastoDocumentosSchema();
+
+    const payload = gastoPorPagarInputSchema.parse(parseGastoPayload(req));
+    const gastoFields = await normalizeGastoForPersistence(tenant.id, payload);
+    const uploadedFilesInput = Array.isArray(req.files) ? req.files : [];
+
+    const gastoId = randomUUID();
+    const uploadedFiles = [];
+
+    for (const file of uploadedFilesInput) {
+      uploadedFiles.push(await uploadBufferToStorage({
+        buffer: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        folder: 'gastos',
+        projectId: gastoFields.proyectoId,
+        recordId: gastoId,
+      }));
+    }
+
+    const fechaPago = payload.fechaPago
+      || (payload.pagado ? new Date().toISOString().slice(0, 10) : null);
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('begin');
+
+      await client.query(
+        `
+          insert into fct_gasto (
+            id,
+            tenant_id,
+            fecha,
+            empresa_id,
+            categoria_id,
+            tipo_documento_id,
+            numero_documento,
+            monto_neto,
+            iva,
+            monto_total,
+            detalle,
+            proyecto_id,
+            colaborador_id,
+            comentario_tipo_documento,
+            origen,
+            fecha_compromiso,
+            fecha_pago,
+            facturado,
+            pagado,
+            created_by
+          )
+          values (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+          )
+        `,
+        [
+          gastoId,
+          tenant.id,
+          gastoFields.fecha,
+          gastoFields.empresaId,
+          gastoFields.categoriaId,
+          gastoFields.tipoDocumentoId,
+          gastoFields.numeroDocumento,
+          gastoFields.montoNeto,
+          gastoFields.iva,
+          gastoFields.montoTotal,
+          gastoFields.detalle,
+          gastoFields.proyectoId,
+          gastoFields.colaboradorId,
+          gastoFields.comentarioTipoDocumento,
+          'COMPROMISO',
+          payload.fechaCompromiso,
+          fechaPago,
+          payload.facturado,
+          payload.pagado,
+          req.auth?.user?.id || null,
+        ],
+      );
+
+      await attachUploadedFilesToGasto((text, params) => client.query(text, params), tenant.id, gastoId, uploadedFiles);
+
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      await cleanupStorageObjects(uploadedFiles);
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const created = await fetchGastoById(tenant.id, gastoId);
+    res.status(201).json(created);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Payload invalido',
+        details: error.flatten(),
+      });
+    }
+
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `Uno de los archivos supera el limite de ${MAX_GASTO_ATTACHMENT_SIZE_MB} MB`,
+      });
+    }
+
+    sendErrorResponse(res, error, 'Error al crear gasto por pagar');
+  }
+});
+
+app.put('/api/gastos/por-pagar/:id', maybeHandleMultipartUploads, async (req, res) => {
+  try {
+    const tenant = await getTenant();
+    await ensureGastoDocumentosSchema();
+
+    const payload = gastoPorPagarInputSchema.parse(parseGastoPayload(req));
+    const gastoFields = await normalizeGastoForPersistence(tenant.id, payload);
+    const uploadedFilesInput = Array.isArray(req.files) ? req.files : [];
+
+    const uploadedFiles = [];
+
+    for (const file of uploadedFilesInput) {
+      uploadedFiles.push(await uploadBufferToStorage({
+        buffer: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        folder: 'gastos',
+        projectId: gastoFields.proyectoId,
+        recordId: req.params.id,
+      }));
+    }
+
+    const fechaPago = payload.fechaPago
+      || (payload.pagado ? new Date().toISOString().slice(0, 10) : null);
+
+    const client = await pool.connect();
+    let removedDocumentRows = [];
+
+    try {
+      await client.query('begin');
+
+      const updateResult = await client.query(
+        `
+          update fct_gasto
+          set
+            fecha = $3,
+            empresa_id = $4,
+            categoria_id = $5,
+            tipo_documento_id = $6,
+            numero_documento = $7,
+            monto_neto = $8,
+            iva = $9,
+            monto_total = $10,
+            detalle = $11,
+            proyecto_id = $12,
+            colaborador_id = $13,
+            comentario_tipo_documento = $14,
+            fecha_compromiso = $15,
+            fecha_pago = $16,
+            facturado = $17,
+            pagado = $18,
+            updated_by = $19,
+            updated_at = now()
+          where tenant_id = $1
+            and id = $2
+            and origen = 'COMPROMISO'
+        `,
+        [
+          tenant.id,
+          req.params.id,
+          gastoFields.fecha,
+          gastoFields.empresaId,
+          gastoFields.categoriaId,
+          gastoFields.tipoDocumentoId,
+          gastoFields.numeroDocumento,
+          gastoFields.montoNeto,
+          gastoFields.iva,
+          gastoFields.montoTotal,
+          gastoFields.detalle,
+          gastoFields.proyectoId,
+          gastoFields.colaboradorId,
+          gastoFields.comentarioTipoDocumento,
+          payload.fechaCompromiso,
+          fechaPago,
+          payload.facturado,
+          payload.pagado,
+          req.auth?.user?.id || null,
+        ],
+      );
+
+      if (updateResult.rowCount === 0) {
+        await client.query('rollback');
+        await cleanupStorageObjects(uploadedFiles);
+        return res.status(404).json({ error: 'Gasto por pagar no encontrado' });
+      }
+
+      const currentDocuments = await fetchGastoDocumentos(
+        tenant.id,
+        req.params.id,
+        (text, params) => client.query(text, params),
+      );
+      const keepIds = new Set(payload.existingAttachmentIds || []);
+      const documentIdsToRemove = currentDocuments
+        .filter((documento) => !keepIds.has(documento.id))
+        .map((documento) => documento.id);
+
+      removedDocumentRows = await removeGastoDocumentos(
+        (text, params) => client.query(text, params),
+        tenant.id,
+        req.params.id,
+        documentIdsToRemove,
+      );
+
+      await attachUploadedFilesToGasto(
+        (text, params) => client.query(text, params),
+        tenant.id,
+        req.params.id,
+        uploadedFiles,
+      );
+
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      await cleanupStorageObjects(uploadedFiles);
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    await cleanupStorageObjects(removedDocumentRows);
+
+    const updated = await fetchGastoById(tenant.id, req.params.id);
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Payload invalido',
+        details: error.flatten(),
+      });
+    }
+
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `Uno de los archivos supera el limite de ${MAX_GASTO_ATTACHMENT_SIZE_MB} MB`,
+      });
+    }
+
+    sendErrorResponse(res, error, 'Error al actualizar gasto por pagar');
+  }
+});
+
+app.patch('/api/gastos/por-pagar/:id/pagar', async (req, res) => {
+  try {
+    const tenant = await getTenant();
+    await ensureGastoDocumentosSchema();
+
+    const payload = gastoPorPagarPagoInputSchema.parse(req.body || {});
+
+    const result = await query(
+      `
+        update fct_gasto
+        set
+          pagado = true,
+          facturado = coalesce($3, facturado),
+          fecha_pago = coalesce($4::date, fecha_pago, current_date),
+          updated_by = $5,
+          updated_at = now()
+        where tenant_id = $1
+          and id = $2
+          and origen = 'COMPROMISO'
+          and pagado = false
+      `,
+      [
+        tenant.id,
+        req.params.id,
+        payload.facturado ?? null,
+        payload.fechaPago ?? null,
+        req.auth?.user?.id || null,
+      ],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Gasto por pagar no encontrado' });
+    }
+
+    const updated = await fetchGastoById(tenant.id, req.params.id);
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Payload invalido',
+        details: error.flatten(),
+      });
+    }
+
+    sendErrorResponse(res, error, 'Error al marcar gasto como pagado');
   }
 });
 

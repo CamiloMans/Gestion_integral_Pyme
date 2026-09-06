@@ -48,6 +48,11 @@ export interface Gasto {
   colaboradorId?: string;
   colaboradorNombre?: string;
   comentarioTipoDocumento?: string;
+  origen?: 'INMEDIATO' | 'COMPROMISO';
+  fechaCompromiso?: string;
+  fechaPago?: string;
+  facturado?: boolean;
+  pagado?: boolean;
   createdAt?: string;
   creadoPor?: string;
   creadoPorNombre?: string;
