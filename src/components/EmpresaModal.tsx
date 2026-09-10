@@ -7,14 +7,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Empresa } from '@/data/mockData';
 import { Save } from 'lucide-react';
 
+type EmpresaInitialValues = Partial<Pick<Empresa, 'razonSocial' | 'rut' | 'numeroContacto' | 'correoElectronico' | 'categoria'>>;
+
 interface EmpresaModalProps {
   open: boolean;
   onClose: () => void;
   onSave: (empresa: Omit<Empresa, 'id' | 'createdAt'>) => void | Promise<void>;
   empresa?: Empresa;
+  /**
+   * Valores iniciales para crear una empresa NUEVA (ej: el destinatario de una
+   * transferencia). No cambia el titulo a "Editar Empresa".
+   * Debe tener referencia estable: un objeto literal en el JSX del padre vuelve a
+   * sembrar el formulario en cada render y pisa lo que el usuario escribe.
+   */
+  initialValues?: EmpresaInitialValues;
 }
 
-export function EmpresaModal({ open, onClose, onSave, empresa }: EmpresaModalProps) {
+export function EmpresaModal({ open, onClose, onSave, empresa, initialValues }: EmpresaModalProps) {
   const [razonSocial, setRazonSocial] = useState('');
   const [rut, setRut] = useState('');
   const [numeroContacto, setNumeroContacto] = useState('');
@@ -23,20 +32,16 @@ export function EmpresaModal({ open, onClose, onSave, empresa }: EmpresaModalPro
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (empresa) {
-      setRazonSocial(empresa.razonSocial ? empresa.razonSocial.toUpperCase() : '');
-      setRut(empresa.rut);
-      setNumeroContacto(empresa.numeroContacto || '');
-      setCorreoElectronico(empresa.correoElectronico || '');
-      setCategoria(empresa.categoria || '');
-    } else {
-      setRazonSocial('');
-      setRut('');
-      setNumeroContacto('');
-      setCorreoElectronico('');
-      setCategoria('');
-    }
-  }, [empresa, open]);
+    // Sin esto el formulario se resiembra durante la animacion de cierre.
+    if (!open) return;
+
+    const source = empresa ?? initialValues;
+    setRazonSocial(source?.razonSocial ? source.razonSocial.toUpperCase() : '');
+    setRut(source?.rut || '');
+    setNumeroContacto(source?.numeroContacto || '');
+    setCorreoElectronico(source?.correoElectronico || '');
+    setCategoria(source?.categoria || '');
+  }, [empresa, initialValues, open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

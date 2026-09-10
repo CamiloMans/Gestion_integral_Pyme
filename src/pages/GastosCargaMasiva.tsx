@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Eye, FileUp, Loader2, Plus, Save, Upload, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Eye, FileUp, Loader2, Plus, Save, Trash2, Upload, XCircle } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { EmpresaModal } from '@/components/EmpresaModal';
@@ -16,13 +16,20 @@ import { toast } from '@/hooks/use-toast';
 import { formatCurrency, type Empresa, type Gasto } from '@/data/mockData';
 import { formatNumericInput, parseNumericInput } from '@/lib/numeric-input';
 import {
+  formatRutForInput,
   isExtractableDocument,
   isOtroTipoDocumento,
+  normalizeRut,
   resolveEmpresaMatch,
   resolveTipoDocumentoId,
   validateGastoDraft,
 } from '@/lib/gasto-document';
-import { postgresApi, type BootstrapResponse, type GastoDocumentExtractionResult } from '@/services/postgresApi';
+import {
+  postgresApi,
+  type BootstrapResponse,
+  type GastoBankOperation,
+  type GastoDocumentExtractionResult,
+} from '@/services/postgresApi';
 import { useAppAuth } from '@/hooks/useAppAuth';
 import { getDefaultRoute, hasPermission, PERMISSIONS } from '@/lib/access-control';
 
@@ -43,6 +50,18 @@ type BulkGastoDraft = {
   comentarioTipoDocumento: string;
 };
 
+/** Datos del comprobante bancario cuando la fila salio de una transferencia. */
+type BulkRowOrigenBancario = {
+  indice: number;
+  total: number;
+  beneficiarioNombre: string | null;
+  beneficiarioRut: string | null;
+  bancoDestino: string | null;
+  cuentaDestino: string | null;
+  numeroOperacion: string | null;
+  idTransaccion: string | null;
+};
+
 type BulkGastoRow = {
   id: string;
   file: File;
@@ -52,11 +71,14 @@ type BulkGastoRow = {
   validationErrors: string[];
   extracted?: GastoDocumentExtractionResult;
   empresaMatchInfo?: EmpresaMatchInfo;
+  origenBancario?: BulkRowOrigenBancario;
   error?: string;
   savedGastoId?: string;
 };
 
 type BulkApplyDraft = Partial<Pick<BulkGastoDraft, 'categoria' | 'empresaId' | 'proyectoId' | 'tipoDocumento'>>;
+
+type EmpresaPrefill = { rowId: string; razonSocial: string; rut: string };
 
 const MAX_EXTRACTION_CONCURRENCY = 2;
 
@@ -94,6 +116,47 @@ function buildInitialRow(file: File): BulkGastoRow {
   };
 }
 
+// Un comprobante bancario genera varias filas con el mismo archivo, asi que el
+// nombre del archivo por si solo deja de identificar la fila.
+function rowAccessibleName(row: BulkGastoRow) {
+  return row.origenBancario && row.origenBancario.total > 1
+    ? `${row.file.name} transferencia ${row.origenBancario.indice} de ${row.origenBancario.total}`
+    : row.file.name;
+}
+
+function rowProveedorSugerido(row: BulkGastoRow) {
+  return row.origenBancario?.beneficiarioNombre || row.extracted?.empresaNombre || '';
+}
+
+function rowRutSugerido(row: BulkGastoRow) {
+  return row.origenBancario?.beneficiarioRut || row.extracted?.empresaRut || '';
+}
+
+/** Convierte una transferencia en el mismo shape que devuelve la extraccion de un documento suelto. */
+function buildOperationExtraction(
+  base: GastoDocumentExtractionResult,
+  operacion: GastoBankOperation,
+): GastoDocumentExtractionResult {
+  return {
+    ...base,
+    fecha: operacion.fecha || base.fecha,
+    tipoDocumento: 'OTRO',
+    numeroDocumento: operacion.numeroDocumento,
+    empresaNombre: operacion.beneficiarioNombre,
+    empresaRut: operacion.beneficiarioRut,
+    // Critico: sin esto, una operacion sin RUT ni nombre caeria al fallback de emisor
+    // y resolveEmpresaMatch elegiria "BANCO DE CHILE" como proveedor.
+    emisorNombre: null,
+    emisorRut: null,
+    montoNeto: null,
+    iva: null,
+    montoTotal: operacion.monto,
+    detalle: operacion.detalle,
+    esComprobanteBancario: false,
+    operacionesBancarias: [],
+  };
+}
+
 function statusBadge(row: BulkGastoRow) {
   if (row.status === 'guardado') return <Badge className="bg-emerald-600">Guardado</Badge>;
   if (row.status === 'guardando') return <Badge variant="secondary">Guardando</Badge>;
@@ -113,6 +176,7 @@ export default function GastosCargaMasiva() {
   const [saving, setSaving] = useState(false);
   const [bulkApply, setBulkApply] = useState<BulkApplyDraft>({});
   const [empresaModalOpen, setEmpresaModalOpen] = useState(false);
+  const [empresaPrefill, setEmpresaPrefill] = useState<EmpresaPrefill | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<{ nombre: string; url: string; tipo: string } | undefined>();
   const [isDragging, setIsDragging] = useState(false);
@@ -142,7 +206,34 @@ export default function GastosCargaMasiva() {
           empresaCreada,
         ],
       } : current);
-      setBulkApply((current) => ({ ...current, empresaId: empresaCreada.id }));
+      if (empresaPrefill) {
+        // El usuario pudo corregir el RUT dentro del modal: manda el guardado.
+        const targetRut = normalizeRut(empresaCreada.rut) || normalizeRut(empresaPrefill.rut);
+
+        setRows((current) => current.map((row) => {
+          if (row.status === 'guardado' || row.status === 'guardando') return row;
+          if (row.draft.empresaId) return row;
+
+          const rowRut = normalizeRut(rowRutSugerido(row));
+          const isTarget = row.id === empresaPrefill.rowId || (Boolean(targetRut) && rowRut === targetRut);
+          if (!isTarget) return row;
+
+          const draft = { ...row.draft, empresaId: empresaCreada.id };
+          const validationErrors = validateRow(draft);
+
+          return {
+            ...row,
+            draft,
+            empresaMatchInfo: null,
+            validationErrors,
+            status: row.status === 'error' ? 'error' : row.status,
+          };
+        }));
+      } else {
+        setBulkApply((current) => ({ ...current, empresaId: empresaCreada.id }));
+      }
+
+      setEmpresaPrefill(null);
       setEmpresaModalOpen(false);
       toast({
         title: 'Empresa creada',
@@ -176,7 +267,10 @@ export default function GastosCargaMasiva() {
     setRows((current) => current.map((row) => (row.id === id ? updater(row) : row)));
   }, []);
 
-  const buildDraftFromExtraction = useCallback((extracted: GastoDocumentExtractionResult) => {
+  const buildDraftFromExtraction = useCallback((
+    extracted: GastoDocumentExtractionResult,
+    overrides: Partial<BulkGastoDraft> = {},
+  ) => {
     const tipoDocumento = resolveTipoDocumentoId(sortedTiposDocumento, extracted.tipoDocumento);
     const empresaMatchInfo = resolveEmpresaMatch(empresas, extracted);
 
@@ -194,8 +288,57 @@ export default function GastosCargaMasiva() {
       comentarioTipoDocumento: '',
     };
 
-    return { draft, empresaMatchInfo };
+    return { draft: { ...draft, ...overrides }, empresaMatchInfo };
   }, [empresas, sortedTiposDocumento]);
+
+  const expandRowIntoOperations = useCallback((
+    placeholderId: string,
+    extracted: GastoDocumentExtractionResult,
+    operaciones: GastoBankOperation[],
+  ) => {
+    setRows((current) => {
+      // El indice se busca DENTRO del updater: el otro worker de extraccion pudo
+      // haber insertado filas antes de esta y desplazado cualquier indice capturado afuera.
+      const index = current.findIndex((row) => row.id === placeholderId);
+      if (index === -1) return current;
+
+      const placeholder = current[index];
+
+      const nextRows: BulkGastoRow[] = operaciones.map((operacion, position) => {
+        const operacionExtraida = buildOperationExtraction(extracted, operacion);
+        const { draft, empresaMatchInfo } = buildDraftFromExtraction(operacionExtraida, {
+          comentarioTipoDocumento: 'TRANSFERENCIA',
+        });
+        const validationErrors = validateRow(draft);
+
+        return {
+          ...placeholder,
+          // Ids deterministas: sirven de key de React y no dependen de crypto.randomUUID.
+          id: `${placeholder.id}-op-${position + 1}`,
+          draft,
+          extracted: operacionExtraida,
+          empresaMatchInfo,
+          origenBancario: {
+            indice: position + 1,
+            total: operaciones.length,
+            beneficiarioNombre: operacion.beneficiarioNombre,
+            beneficiarioRut: operacion.beneficiarioRut,
+            bancoDestino: operacion.bancoDestino,
+            cuentaDestino: operacion.cuentaDestino,
+            numeroOperacion: operacion.numeroOperacion,
+            idTransaccion: operacion.idTransaccion,
+          },
+          status: validationErrors.length === 0 ? 'validado' : 'listo',
+          validationErrors,
+          selected: true,
+          error: undefined,
+          savedGastoId: undefined,
+        };
+      });
+
+      return [...current.slice(0, index), ...nextRows, ...current.slice(index + 1)];
+    });
+  }, [buildDraftFromExtraction, validateRow]);
 
   const runExtractionQueue = useCallback(async (items: BulkGastoRow[]) => {
     let cursor = 0;
@@ -209,6 +352,15 @@ export default function GastosCargaMasiva() {
 
         try {
           const extracted = await postgresApi.extractGastoDocument(row.file);
+          const operaciones = extracted.operacionesBancarias || [];
+
+          // Un comprobante bancario se abre en una fila por transferencia. Si el
+          // detalle no vino utilizable, sigue el camino normal de una sola fila.
+          if (extracted.esComprobanteBancario && operaciones.length > 0) {
+            expandRowIntoOperations(row.id, extracted, operaciones);
+            continue;
+          }
+
           const { draft, empresaMatchInfo } = buildDraftFromExtraction(extracted);
           const validationErrors = validateRow(draft);
 
@@ -232,7 +384,7 @@ export default function GastosCargaMasiva() {
     };
 
     await Promise.all(Array.from({ length: Math.min(MAX_EXTRACTION_CONCURRENCY, items.length) }, worker));
-  }, [buildDraftFromExtraction, setRow, validateRow]);
+  }, [buildDraftFromExtraction, expandRowIntoOperations, setRow, validateRow]);
 
   useEffect(() => {
     let mounted = true;
@@ -384,6 +536,19 @@ export default function GastosCargaMasiva() {
     setViewerOpen(true);
   }, []);
 
+  const openEmpresaPrefill = useCallback((row: BulkGastoRow) => {
+    setEmpresaPrefill({
+      rowId: row.id,
+      razonSocial: rowProveedorSugerido(row).toUpperCase(),
+      rut: formatRutForInput(rowRutSugerido(row)),
+    });
+    setEmpresaModalOpen(true);
+  }, []);
+
+  const removeRow = useCallback((id: string) => {
+    setRows((current) => current.filter((row) => row.id !== id));
+  }, []);
+
   const buildGastoPayload = useCallback((row: BulkGastoRow): Omit<Gasto, 'id'> => {
     const montoTotal = parseNumericInput(row.draft.montoTotal, { allowDecimal: false });
     const montoNeto = parseNumericInput(row.draft.montoNeto, { allowDecimal: false });
@@ -488,7 +653,10 @@ export default function GastosCargaMasiva() {
                 variant="outline"
                 size="icon"
                 className="h-10 w-10 shrink-0"
-                onClick={() => setEmpresaModalOpen(true)}
+                onClick={() => {
+                  setEmpresaPrefill(null);
+                  setEmpresaModalOpen(true);
+                }}
                 aria-label="Agregar empresa"
                 title="Agregar empresa"
               >
@@ -581,17 +749,48 @@ export default function GastosCargaMasiva() {
                         checked={row.selected}
                         disabled={disabled}
                         onCheckedChange={(checked) => setRow(row.id, (current) => ({ ...current, selected: Boolean(checked) }))}
-                        aria-label={`Seleccionar ${row.file.name}`}
+                        aria-label={`Seleccionar ${rowAccessibleName(row)}`}
                       />
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         <Button type="button" variant="ghost" size="icon" onClick={() => openPreview(row)} disabled={busy}>
                           <Eye size={16} />
                         </Button>
+                        {row.status !== 'guardado' && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => removeRow(row.id)}
+                            disabled={busy}
+                            aria-label={`Eliminar ${rowAccessibleName(row)}`}
+                            title="Quitar de la carga"
+                          >
+                            <Trash2 size={16} />
+                          </Button>
+                        )}
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{row.file.name}</p>
-                          <p className="text-xs text-muted-foreground">{Math.max(1, Math.round(row.file.size / 1024))} KB</p>
+                          {row.origenBancario ? (
+                            <>
+                              <p className="truncate text-xs text-muted-foreground">
+                                {row.origenBancario.total > 1
+                                  ? `Transferencia ${row.origenBancario.indice} de ${row.origenBancario.total}`
+                                  : 'Transferencia'}
+                                {row.origenBancario.beneficiarioNombre ? ` · ${row.origenBancario.beneficiarioNombre}` : ''}
+                              </p>
+                              {row.origenBancario.bancoDestino && (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {row.origenBancario.bancoDestino}
+                                  {row.origenBancario.cuentaDestino ? ` · ${row.origenBancario.cuentaDestino}` : ''}
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">{Math.max(1, Math.round(row.file.size / 1024))} KB</p>
+                          )}
                         </div>
                       </div>
                     </TableCell>
@@ -603,10 +802,26 @@ export default function GastosCargaMasiva() {
                       </select>
                     </TableCell>
                     <TableCell>
-                      <select className="h-10 w-full rounded-md border bg-background px-2 text-sm" value={row.draft.empresaId} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'empresaId', e.target.value)}>
-                        <option value="">Seleccionar</option>
-                        {sortedEmpresas.map((item) => <option key={item.id} value={item.id}>{item.razonSocial}</option>)}
-                      </select>
+                      <div className="flex gap-2">
+                        <select className="h-10 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm" value={row.draft.empresaId} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'empresaId', e.target.value)}>
+                          <option value="">Seleccionar</option>
+                          {sortedEmpresas.map((item) => <option key={item.id} value={item.id}>{item.razonSocial}</option>)}
+                        </select>
+                        {!row.draft.empresaId && rowProveedorSugerido(row) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 shrink-0"
+                            disabled={disabled}
+                            onClick={() => openEmpresaPrefill(row)}
+                            aria-label={`Crear empresa ${rowProveedorSugerido(row)}`}
+                            title="Crear empresa con los datos del documento"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <select className="h-10 w-full rounded-md border bg-background px-2 text-sm" value={row.draft.proyectoId} disabled={disabled} onChange={(e) => updateDraftField(row.id, 'proyectoId', e.target.value)}>
@@ -640,7 +855,7 @@ export default function GastosCargaMasiva() {
                           checked={row.status === 'validado' || row.status === 'guardado'}
                           disabled={disabled || row.status === 'extrayendo' || row.status === 'pendiente'}
                           onCheckedChange={(checked) => toggleValidated(row.id, Boolean(checked))}
-                          aria-label={`Validar ${row.file.name}`}
+                          aria-label={`Validar ${rowAccessibleName(row)}`}
                         />
                         <div className="min-w-0 text-xs">
                           {row.status === 'validado' || row.status === 'guardado' ? (
@@ -727,8 +942,12 @@ export default function GastosCargaMasiva() {
 
       <EmpresaModal
         open={empresaModalOpen}
-        onClose={() => setEmpresaModalOpen(false)}
+        onClose={() => {
+          setEmpresaModalOpen(false);
+          setEmpresaPrefill(null);
+        }}
         onSave={handleCreateEmpresa}
+        initialValues={empresaPrefill ?? undefined}
       />
     </Layout>
   );

@@ -30,6 +30,18 @@ export function normalizeRut(value?: string | null) {
   return `${body}${verifier}`;
 }
 
+/**
+ * RUT en formato 12345678-9 desde cualquier variante. Los comprobantes bancarios
+ * traen ceros a la izquierda (0191467035) y el servidor los conserva (019146703-5),
+ * asi que no sirven tal cual para precargar el formulario de empresa.
+ */
+export function formatRutForInput(value?: string | null) {
+  const normalized = normalizeRut(value);
+  if (normalized.length < 2) return normalized;
+
+  return `${normalized.slice(0, -1)}-${normalized.slice(-1)}`;
+}
+
 export function isExtractableDocument(file: File) {
   const mimeType = file.type.toLowerCase();
   const fileName = file.name.toLowerCase();

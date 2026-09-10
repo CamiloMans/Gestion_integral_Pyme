@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatRutForInput,
   isExtractableDocument,
   normalizeRut,
   resolveEmpresaId,
@@ -55,6 +56,27 @@ describe('gasto document helpers', () => {
       score: 1,
       method: 'rut',
     });
+  });
+
+  it('formats bank ruts for the empresa form', () => {
+    // El comprobante de movimiento trae 0191467035 y el servidor lo deja 019146703-5.
+    expect(formatRutForInput('0191467035')).toBe('19146703-5');
+    expect(formatRutForInput('019146703-5')).toBe('19146703-5');
+    expect(formatRutForInput('19.146.703-5')).toBe('19146703-5');
+    expect(formatRutForInput(null)).toBe('');
+  });
+
+  it('matches a company when the server keeps the leading zero', () => {
+    const empresas = [
+      { id: 'empresa-franklin', razonSocial: 'FRANKLIN SOTO GUICHAPANI', rut: '19.146.703-5', createdAt: '2026-01-01' },
+    ];
+
+    expect(resolveEmpresaMatch(empresas, {
+      empresaRut: '019146703-5',
+      emisorRut: null,
+      empresaNombre: 'FRANKLIN SOTO GUICHAPANI',
+      emisorNombre: null,
+    })).toMatchObject({ empresaId: 'empresa-franklin', score: 1, method: 'rut' });
   });
 
   it('resolves company by fuzzy name and returns similarity score', () => {

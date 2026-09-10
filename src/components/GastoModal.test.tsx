@@ -85,6 +85,72 @@ describe('GastoModal', () => {
     expect(screen.getByDisplayValue('SERVICIO DE COMIDAS EN RESTAURANTE')).toBeInTheDocument();
   });
 
+  // La carga masiva expande un comprobante bancario en una fila por transferencia.
+  // Aca, en el alta individual, el mismo payload debe seguir llenando un solo formulario.
+  it('ignores the bank operations list and fills one form from the document totals', async () => {
+    vi.mocked(postgresApi.extractGastoDocument).mockResolvedValue({
+      fecha: '2026-09-07',
+      tipoDocumento: 'OTRO',
+      numeroDocumento: null,
+      empresaNombre: 'Proveedor Uno SPA',
+      empresaRut: '76.123.456-7',
+      emisorNombre: 'BANCO DE CHILE',
+      emisorRut: null,
+      receptorNombre: 'REKOSOL INGENIERIA SPA',
+      receptorRut: '77522275-1',
+      montoNeto: null,
+      iva: null,
+      montoTotal: 651836,
+      detalle: 'Comprobante de operaciones autorizadas',
+      confidence: 0.95,
+      warnings: [],
+      esComprobanteBancario: true,
+      operacionesDeclaradas: 2,
+      operacionesBancarias: [
+        {
+          indice: 1,
+          fecha: '2026-09-07',
+          numeroDocumento: '6033950421',
+          numeroOperacion: '6033950421',
+          idTransaccion: null,
+          beneficiarioNombre: 'TERMOALUMPLAS S.P.A',
+          beneficiarioRut: '77079176-6',
+          bancoDestino: 'BANCO DEL ESTADO DE CHILE',
+          cuentaDestino: '083170458403',
+          cuentaOrigen: '001015259301',
+          monto: 190000,
+          tipoOperacion: 'TRANSFERENCIA',
+          detalle: 'TRANSFERENCIA A TERMOALUMPLAS S.P.A',
+        },
+        {
+          indice: 2,
+          fecha: '2026-09-07',
+          numeroDocumento: '6033949908',
+          numeroOperacion: '6033949908',
+          idTransaccion: null,
+          beneficiarioNombre: 'MAURICIO SOTO BARAHONA',
+          beneficiarioRut: '12465535-8',
+          bancoDestino: 'BCI MACHBANK',
+          cuentaDestino: '000063045672',
+          cuentaOrigen: '001015259301',
+          monto: 461836,
+          tipoOperacion: 'TRANSFERENCIA',
+          detalle: 'TRANSFERENCIA A MAURICIO SOTO BARAHONA',
+        },
+      ],
+    });
+
+    render(<GastoModal {...props} />);
+    const input = document.querySelector('#archivosAdjuntos') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { files: [new File(['pdf'], 'Comprobante.pdf', { type: 'application/pdf' })] } });
+
+    await waitFor(() => expect(screen.getByLabelText('Monto Total (CLP) *')).toHaveValue('651.836'));
+    expect(screen.getByDisplayValue('COMPROBANTE DE OPERACIONES AUTORIZADAS')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('190.000')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('6033950421')).not.toBeInTheDocument();
+  });
+
   it('sends the specified document type when the option name is uppercase OTRO', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
 

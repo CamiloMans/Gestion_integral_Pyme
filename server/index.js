@@ -40,6 +40,11 @@ import {
   createEmpresaFusionInputSchema,
   normalizeEmpresaFusionSelection,
 } from './empresas-fusion.js';
+import {
+  buildOpenAiExtractionInput,
+  getExpenseExtractionJsonSchema,
+  normalizeExtractionPayload,
+} from './gasto-extraccion.js';
 import { assertCanManageProjectHours, ensureHorasSchema, registerHorasRoutes } from './horas.js';
 import { ALL_PERMISSIONS, PERMISSIONS } from '../shared/access-control.js';
 import {
@@ -664,193 +669,10 @@ function detectDocumentMimeType(file) {
   return rawMimeType || 'application/octet-stream';
 }
 
-function normalizeExtractedNumber(value) {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? Math.round(value) : null;
-  }
-
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const normalized = value
-    .replace(/[^\d,.-]/g, '')
-    .replace(/\.(?=\d{3}(\D|$))/g, '')
-    .replace(',', '.');
-  const parsed = Number(normalized);
-
-  return Number.isFinite(parsed) ? Math.round(parsed) : null;
-}
-
-function normalizeExtractedText(value, { uppercase = false } = {}) {
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  const normalized = String(value).trim();
-  if (!normalized) {
-    return null;
-  }
-
-  return uppercase ? normalized.toUpperCase() : normalized;
-}
-
-function normalizeRut(value) {
-  const normalized = normalizeExtractedText(value, { uppercase: true });
-  if (!normalized) {
-    return null;
-  }
-
-  const cleaned = normalized.replace(/[^0-9K]/g, '');
-  if (cleaned.length < 2) {
-    return normalized;
-  }
-
-  return `${cleaned.slice(0, -1)}-${cleaned.slice(-1)}`;
-}
-
-function normalizeExtractedDate(value) {
-  const normalized = normalizeExtractedText(value);
-  if (!normalized) {
-    return null;
-  }
-
-  const isoMatch = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (isoMatch) {
-    const [, year, month, day] = isoMatch;
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
-
-  // Formato chileno: DD/MM/YYYY o DD-MM-YYYY.
-  const localMatch = normalized.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
-  if (localMatch) {
-    const [, day, month, year] = localMatch;
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
-
-  return normalized;
-}
-
-function normalizePlazoPagoDias(value) {
-  const parsed = normalizeExtractedNumber(value);
-  if (parsed === null || parsed <= 0 || parsed > 365) {
-    return null;
-  }
-
-  return parsed;
-}
-
-function normalizeDocumentType(value) {
-  const normalized = normalizeExtractedText(value, { uppercase: true });
-  if (!normalized) {
-    return 'OTRO';
-  }
-
-  if (normalized.includes('HONORARIO')) return 'BOLETA DE HONORARIO';
-  if (normalized.includes('EXENTA') || normalized.includes('NO AFECTA')) return 'FACTURA EXENTA';
-  if (normalized.includes('FACTURA')) return 'FACTURA';
-  if (normalized.includes('BOLETA')) return 'BOLETA';
-  return 'OTRO';
-}
-
-function normalizeExtractionPayload(rawPayload, metadata) {
-  const warnings = Array.isArray(rawPayload?.warnings)
-    ? rawPayload.warnings.map((warning) => normalizeExtractedText(warning)).filter(Boolean)
-    : [];
-  const confidence = Number(rawPayload?.confidence);
-
-  const montoNeto = normalizeExtractedNumber(rawPayload?.montoNeto);
-  const iva = normalizeExtractedNumber(rawPayload?.iva);
-  const tieneIva = typeof rawPayload?.tieneIva === 'boolean'
-    ? rawPayload.tieneIva
-    : Boolean(iva && iva > 0);
-
-  return {
-    fecha: normalizeExtractedDate(rawPayload?.fecha),
-    fechaVencimiento: normalizeExtractedDate(rawPayload?.fechaVencimiento),
-    plazoPagoDias: normalizePlazoPagoDias(rawPayload?.plazoPagoDias),
-    tieneIva,
-    tipoDocumento: normalizeDocumentType(rawPayload?.tipoDocumento),
-    numeroDocumento: normalizeExtractedText(rawPayload?.numeroDocumento),
-    empresaNombre: normalizeExtractedText(rawPayload?.empresaNombre, { uppercase: true }),
-    empresaRut: normalizeRut(rawPayload?.empresaRut),
-    emisorNombre: normalizeExtractedText(rawPayload?.emisorNombre, { uppercase: true }),
-    emisorRut: normalizeRut(rawPayload?.emisorRut),
-    receptorNombre: normalizeExtractedText(rawPayload?.receptorNombre, { uppercase: true }),
-    receptorRut: normalizeRut(rawPayload?.receptorRut),
-    montoNeto,
-    iva,
-    montoTotal: normalizeExtractedNumber(rawPayload?.montoTotal),
-    detalle: normalizeExtractedText(rawPayload?.detalle, { uppercase: true }),
-    confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
-    warnings,
-    metadata,
-  };
-}
-
 function validateOpenAiRuntimeApiKey() {
   if (!OPENAI_API_KEY) {
     throw createStorageError('API_KEY_OPENAI no esta configurada en el backend.', 500);
   }
-}
-
-function getExpenseExtractionJsonSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required: [
-      'fecha',
-      'fechaVencimiento',
-      'plazoPagoDias',
-      'tieneIva',
-      'tipoDocumento',
-      'numeroDocumento',
-      'empresaNombre',
-      'empresaRut',
-      'emisorNombre',
-      'emisorRut',
-      'receptorNombre',
-      'receptorRut',
-      'montoNeto',
-      'iva',
-      'montoTotal',
-      'detalle',
-      'confidence',
-      'warnings',
-    ],
-    properties: {
-      fecha: { type: ['string', 'null'], description: 'Fecha de emision del documento en formato YYYY-MM-DD.' },
-      fechaVencimiento: {
-        type: ['string', 'null'],
-        description: 'Fecha de vencimiento o fecha de pago del documento en formato YYYY-MM-DD. Null si no aparece.',
-      },
-      plazoPagoDias: {
-        type: ['number', 'null'],
-        description: 'Dias de plazo de pago declarados en el documento (ej: "30 dias"). Null si no aparece.',
-      },
-      tieneIva: {
-        type: 'boolean',
-        description: 'true si el documento desglosa o incluye IVA, false si es exento/sin IVA.',
-      },
-      tipoDocumento: {
-        type: 'string',
-        enum: ['FACTURA', 'BOLETA', 'BOLETA DE HONORARIO', 'FACTURA EXENTA', 'OTRO'],
-      },
-      numeroDocumento: { type: ['string', 'null'], description: 'Folio, numero de factura, boleta u orden.' },
-      empresaNombre: { type: ['string', 'null'], description: 'Proveedor real a cargar como empresa/persona.' },
-      empresaRut: { type: ['string', 'null'], description: 'RUT del proveedor real, si esta visible.' },
-      emisorNombre: { type: ['string', 'null'] },
-      emisorRut: { type: ['string', 'null'] },
-      receptorNombre: { type: ['string', 'null'] },
-      receptorRut: { type: ['string', 'null'] },
-      montoNeto: { type: ['number', 'null'] },
-      iva: { type: ['number', 'null'] },
-      montoTotal: { type: ['number', 'null'] },
-      detalle: { type: ['string', 'null'], description: 'Descripcion breve del gasto, no mas de 120 caracteres.' },
-      confidence: { type: 'number', minimum: 0, maximum: 1 },
-      warnings: { type: 'array', items: { type: 'string' } },
-    },
-  };
 }
 
 function extractOpenAiStructuredOutput(responseBody) {
@@ -879,51 +701,6 @@ function extractOpenAiStructuredOutput(responseBody) {
   }
 }
 
-function buildOpenAiExtractionInput(file, mimeType) {
-  const base64File = file.buffer.toString('base64');
-  const prompt = [
-    'Extrae datos de un gasto chileno para llenar formulario Rekosol.',
-    'Prioriza proveedor real del gasto para empresaNombre/empresaRut.',
-    'Si el documento dice "POR CUENTA DE", usa esa entidad como proveedor; conserva emisorRut tambien.',
-    'Receptor normalmente puede ser REKOSOL INGENIERIA SPA, no usarlo como proveedor.',
-    'Montos en CLP como numeros enteros sin puntos ni signo peso.',
-    'Si hay factura con subtotal neto, IVA y total, extrae esos tres.',
-    'Si es boleta/comprobante sin IVA visible, deja montoNeto e iva null y usa montoTotal.',
-    'tieneIva true solo si el documento desglosa o incluye IVA; false en exentas, honorarios sin IVA o comprobantes sin IVA.',
-    'fecha es la fecha de emision del documento.',
-    'fechaVencimiento es la fecha de vencimiento o fecha de pago indicada (vence, pagar antes de, fecha de pago); null si no aparece.',
-    'plazoPagoDias son los dias de credito declarados (ej: "pago a 30 dias", "credito 60 dias"); null si no aparece.',
-    'Si el documento es comprobante bancario, tipoDocumento OTRO salvo que muestre factura/boleta.',
-    'No inventes datos no visibles.',
-  ].join('\n');
-
-  const content = [];
-
-  if (mimeType.startsWith('image/')) {
-    content.push({
-      type: 'input_image',
-      image_url: `data:${mimeType};base64,${base64File}`,
-      detail: 'high',
-    });
-  } else if (mimeType === 'application/pdf') {
-    content.push({
-      type: 'input_file',
-      filename: file.originalname || 'documento.pdf',
-      file_data: `data:application/pdf;base64,${base64File}`,
-    });
-  } else {
-    const xmlText = file.buffer.toString('utf8').slice(0, 120000);
-    content.push({
-      type: 'input_text',
-      text: `Contenido XML del documento:\n${xmlText}`,
-    });
-  }
-
-  content.push({ type: 'input_text', text: prompt });
-
-  return [{ role: 'user', content }];
-}
-
 async function requestOpenAiExpenseExtraction({ file, mimeType, model }) {
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -933,7 +710,10 @@ async function requestOpenAiExpenseExtraction({ file, mimeType, model }) {
     },
     body: JSON.stringify({
       model,
-      max_output_tokens: 1200,
+      // Un comprobante bancario con muchas transferencias son ~120 tokens por
+      // operacion, y el razonamiento del modelo sale del mismo presupuesto.
+      // Solo se cobra lo generado, asi que un techo alto no encarece los documentos chicos.
+      max_output_tokens: 8000,
       input: buildOpenAiExtractionInput(file, mimeType),
       text: {
         format: {
@@ -951,6 +731,13 @@ async function requestOpenAiExpenseExtraction({ file, mimeType, model }) {
   if (!response.ok) {
     const message = responseBody?.error?.message || `OpenAI respondio ${response.status}`;
     throw new Error(message);
+  }
+
+  // Sin esto una respuesta cortada falla como "no devolvio datos estructurados",
+  // que no dice nada sobre la causa real.
+  if (responseBody?.status === 'incomplete') {
+    const reason = responseBody?.incomplete_details?.reason || 'desconocido';
+    throw new Error(`OpenAI corto la respuesta (${reason}). Sube max_output_tokens o divide el comprobante.`);
   }
 
   const structuredOutput = extractOpenAiStructuredOutput(responseBody);

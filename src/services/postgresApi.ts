@@ -240,6 +240,24 @@ type GastoMutationPayload = Omit<Gasto, 'id' | 'archivosAdjuntos'> & {
   archivosAdjuntos?: GastoAttachmentInput[];
   existingAttachmentIds?: string[];
 };
+/** Una transferencia dentro de un comprobante bancario. */
+type GastoBankOperation = {
+  /** Posicion 1..N dentro del comprobante. */
+  indice: number;
+  fecha: string | null;
+  /** Numero de operacion y, si no existe, id de transaccion. */
+  numeroDocumento: string | null;
+  numeroOperacion: string | null;
+  idTransaccion: string | null;
+  beneficiarioNombre: string | null;
+  beneficiarioRut: string | null;
+  bancoDestino: string | null;
+  cuentaDestino: string | null;
+  cuentaOrigen: string | null;
+  monto: number | null;
+  tipoOperacion: string | null;
+  detalle: string | null;
+};
 type GastoDocumentExtractionResult = {
   fecha: string | null;
   /** Fecha de vencimiento / fecha de pago detectada en el documento. */
@@ -262,6 +280,12 @@ type GastoDocumentExtractionResult = {
   detalle: string | null;
   confidence: number;
   warnings: string[];
+  /** true cuando el documento es un comprobante bancario de transferencias. */
+  esComprobanteBancario?: boolean;
+  /** Cantidad de operaciones declarada en el encabezado del comprobante. */
+  operacionesDeclaradas?: number | null;
+  /** Una entrada por transferencia detectada. Vacio o ausente en documentos normales. */
+  operacionesBancarias?: GastoBankOperation[];
   metadata?: {
     model?: string;
     fileName?: string;
@@ -948,6 +972,7 @@ export type {
   ConfiguracionResponse,
   DocumentoHitoRecord,
   DocumentoHitoRecordCreateInput,
+  GastoBankOperation,
   GastoDocumentExtractionResult,
   DocumentoProyectoRecord,
   DocumentoProyectoRecordCreateInput,
