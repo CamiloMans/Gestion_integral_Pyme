@@ -32,7 +32,7 @@ VITE_SHAREPOINT_SITE_URL=https://tu-tenant.sharepoint.com/sites/tu-sitio
 VITE_AUTH_REDIRECT_URI=https://tu-app.onrender.com
 VITE_AUTH_POST_LOGOUT_REDIRECT_URI=https://tu-app.onrender.com/login
 
-APP_SESSION_SECRET=un-secreto-largo-y-unico
+APP_SESSION_SECRET=<genera-un-valor-aleatorio>
 
 PGHOST=tu-host-postgres
 PGPORT=5432
@@ -62,10 +62,10 @@ Valor recomendado:
 - idealmente 64 caracteres o mas
 - no reutilizar una clave antigua o compartida entre proyectos
 
-Ejemplo de valor valido:
+Formato esperado (genera tu propio valor; nunca copies uno desde la documentacion ni lo guardes en el repositorio):
 
 ```env
-APP_SESSION_SECRET=8a2c4f2f7f764e6a8d7d4c9c55f1b067a63f1a7d9f9a31c2d9d6b7f4a1c8e5b2
+APP_SESSION_SECRET=<64-caracteres-hex-generados-con-el-comando-de-abajo>
 ```
 
 Si quieres generar una clave localmente:

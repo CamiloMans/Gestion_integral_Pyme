@@ -19,6 +19,11 @@ dist-ssr
 upload-secret.txt
 .storage/
 
+# Ad-hoc local scripts (root-level, "_" prefix); reusable scripts go in scripts/
+/_*.mjs
+/_*.cjs
+/_*.js
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

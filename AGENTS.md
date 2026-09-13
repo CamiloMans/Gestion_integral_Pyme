@@ -40,6 +40,13 @@ Get-NetIPAddress -AddressFamily IPv4 |
 
 No confundir la IP LAN de la aplicacion con la IP publica de Cloud SQL.
 
+## Credenciales y scripts ad-hoc
+
+- Tratar el repositorio como publico: nunca escribir contrasenas, secretos, claves de API ni cadenas de conexion con credenciales en codigo, scripts o documentacion.
+- Todo script que se conecte a PostgreSQL debe leer `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` y `PGSSLMODE` desde `.env` con `import 'dotenv/config'`, igual que `server/db.js`.
+- Los scripts temporales de diagnostico van en la raiz con prefijo `_` (por ejemplo `_revisar-algo.mjs`); `.gitignore` los excluye. Los scripts reutilizables van en `scripts/`.
+- En la documentacion usar placeholders como `<genera-un-valor-aleatorio>` en lugar de valores reales.
+
 ## Google Cloud SQL
 
 - Proyecto: `manso-492902`.
