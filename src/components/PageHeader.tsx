@@ -7,6 +7,7 @@ type HeaderAction = {
   onClick: () => void;
   icon?: ReactNode;
   variant?: 'default' | 'outline' | 'secondary' | 'ghost';
+  disabled?: boolean;
 };
 
 interface PageHeaderProps {
@@ -36,6 +37,7 @@ export function PageHeader({ title, subtitle, action, actions, children }: PageH
             onClick={item.onClick}
             variant={item.variant || 'default'}
             className="hidden sm:flex gap-2"
+            disabled={item.disabled}
           >
             {item.icon || <Plus size={18} />}
             {item.label}

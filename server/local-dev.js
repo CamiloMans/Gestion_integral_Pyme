@@ -298,26 +298,37 @@ export async function ensureDevSeedData() {
 
     const details = getDevAuthBypassDetails();
 
-    await query(
+    const existingTenantResult = await query(
       `
-        insert into tenants (
-          id,
-          slug,
-          nombre,
-          estado,
-          created_at,
-          updated_at
-        )
-        values ($1, $2, $3, 'activo', now(), now())
-        on conflict (id)
-        do update set
-          slug = excluded.slug,
-          nombre = excluded.nombre,
-          estado = 'activo',
-          updated_at = now()
+        select id
+        from tenants
+        where slug = $1
+        limit 1
       `,
-      [details.tenantId, details.tenantSlug, details.tenantName],
+      [details.tenantSlug],
     );
+
+    let resolvedTenantId = existingTenantResult.rows[0]?.id;
+
+    if (!resolvedTenantId) {
+      const tenantResult = await query(
+        `
+          insert into tenants (
+            id,
+            slug,
+            nombre,
+            estado,
+            created_at,
+            updated_at
+          )
+          values ($1, $2, $3, 'activo', now(), now())
+          returning id
+        `,
+        [details.tenantId, details.tenantSlug, details.tenantName],
+      );
+
+      resolvedTenantId = tenantResult.rows[0]?.id || details.tenantId;
+    }
 
     const existingUserResult = await query(
       `
@@ -378,7 +389,7 @@ export async function ensureDevSeedData() {
         where id = $3
         limit 1
       `,
-      [details.tenantId, resolvedUserId, details.membershipId],
+      [resolvedTenantId, resolvedUserId, details.membershipId],
     );
 
     const resolvedMembershipId = existingMembershipResult.rows[0]?.id || details.membershipId;
@@ -395,7 +406,7 @@ export async function ensureDevSeedData() {
             updated_at = now()
           where id = $1
         `,
-        [resolvedMembershipId, details.tenantId, resolvedUserId, details.role],
+        [resolvedMembershipId, resolvedTenantId, resolvedUserId, details.role],
       );
     } else {
       await query(
@@ -411,12 +422,13 @@ export async function ensureDevSeedData() {
           )
           values ($1, $2, $3, $4, 'activo', now(), now())
         `,
-        [resolvedMembershipId, details.tenantId, resolvedUserId, details.role],
+        [resolvedMembershipId, resolvedTenantId, resolvedUserId, details.role],
       );
     }
 
     return {
       ...details,
+      tenantId: resolvedTenantId,
       userId: resolvedUserId,
       membershipId: resolvedMembershipId,
     };

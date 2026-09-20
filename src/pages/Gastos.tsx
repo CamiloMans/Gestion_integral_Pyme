@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare, Plus, Upload } from 'lucide-react';
+import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare, Plus, Upload, Download } from 'lucide-react';
 import { DocumentoViewer } from '@/components/DocumentoViewer';
 import { DetalleGastoDialog } from '@/components/DetalleGastoDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -59,6 +59,7 @@ export default function Gastos() {
   const [gastos, setGastos] = useState<Gasto[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingSave, setLoadingSave] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -517,6 +518,35 @@ export default function Gastos() {
     setConfirmDialogOpen(true);
   };
 
+  const handleExportExcel = async () => {
+    if (!bootstrap || gastos.length === 0) {
+      toast({
+        title: 'No hay gastos para exportar',
+        description: 'Carga los gastos antes de generar el archivo.',
+      });
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const { downloadGastosExcel } = await import('@/lib/gastos-excel');
+      const exportedCount = await downloadGastosExcel(gastos, bootstrap);
+      toast({
+        title: 'Excel generado',
+        description: `Se exportaron ${exportedCount} gastos en formato tabla.`,
+        variant: 'success',
+      });
+    } catch (exportError) {
+      toast({
+        title: 'No se pudo generar el Excel',
+        description: exportError instanceof Error ? exportError.message : 'Intenta nuevamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!gastoAEliminar) {
       return;
@@ -555,6 +585,13 @@ export default function Gastos() {
             : `${cantidadGastosTexto} gastos encontrados`
         }
         actions={[
+          ...(hasPermission(session, PERMISSIONS.EXPENSES_RECORDS) ? [{
+            label: exporting ? 'Generando Excel...' : 'Exportar Excel',
+            onClick: () => void handleExportExcel(),
+            icon: <Download size={18} />,
+            variant: 'outline' as const,
+            disabled: exporting || loading || gastos.length === 0,
+          }] : []),
           ...(hasPermission(session, PERMISSIONS.EXPENSES_BULK_UPLOAD) ? [{
             label: 'Carga masiva',
             onClick: () => navigate('/gastos/carga-masiva'),
