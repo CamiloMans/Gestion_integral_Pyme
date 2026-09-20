@@ -8,6 +8,10 @@ const CLP_FORMAT = '[$-es-CL]$ #,##0;[Red]-[$-es-CL]$ #,##0';
 const DATE_FORMAT = 'dd/mm/yyyy';
 const TABLE_STYLE = 'TableStyleMedium2';
 
+function withFilterButtons<T extends { name: string }>(columns: T[]) {
+  return columns.map((column) => ({ ...column, filterButton: true }));
+}
+
 function parseDate(value?: string) {
   if (!value) return undefined;
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value;
@@ -53,10 +57,10 @@ function addSummaryTable(
     headerRow: true,
     totalsRow: true,
     style: { theme: TABLE_STYLE, showRowStripes: true },
-    columns: [
+    columns: withFilterButtons([
       { name: 'Concepto', totalsRowLabel: 'Total' },
       { name: 'Monto total', totalsRowFunction: 'sum' },
-    ],
+    ]),
     rows: rows.map((row) => [row.label, row.total]),
   });
   for (let row = startRow + 1; row <= startRow + rows.length + 1; row += 1) {
@@ -139,7 +143,7 @@ export function buildGastosWorkbook(gastos: Gasto[], catalogs: ExportCatalogs) {
     headerRow: true,
     totalsRow: true,
     style: { theme: TABLE_STYLE, showRowStripes: true },
-    columns: [
+    columns: withFilterButtons([
       { name: 'Fecha' }, { name: 'Creado el' }, { name: 'Registrado por' }, { name: 'Código proyecto' },
       { name: 'Proyecto' }, { name: 'Categoría' }, { name: 'Empresa' }, { name: 'RUT' },
       { name: 'Tipo documento' }, { name: 'N° documento' }, { name: 'Detalle' },
@@ -147,7 +151,7 @@ export function buildGastosWorkbook(gastos: Gasto[], catalogs: ExportCatalogs) {
       { name: 'IVA', totalsRowFunction: 'sum' }, { name: 'Monto total', totalsRowFunction: 'sum' },
       { name: 'Origen' }, { name: 'Fecha compromiso' }, { name: 'Fecha pago' },
       { name: 'Facturado' }, { name: 'Pagado' }, { name: 'Adjuntos' },
-    ],
+    ]),
     rows: detailRows.map((row) => row.values),
   });
   gastosSheet.columns = [
@@ -158,7 +162,6 @@ export function buildGastosWorkbook(gastos: Gasto[], catalogs: ExportCatalogs) {
   ];
   [1, 2, 16, 17].forEach((column) => { gastosSheet.getColumn(column).numFmt = DATE_FORMAT; });
   [12, 13, 14].forEach((column) => { gastosSheet.getColumn(column).numFmt = CLP_FORMAT; });
-  gastosSheet.autoFilter = { from: 'A3', to: `T${Math.max(4, detailRows.length + 3)}` };
 
   const resumenSheet = workbook.addWorksheet('Resumen', { views: [{ state: 'frozen', ySplit: 3 }] });
   addTitle(resumenSheet, 'Resumen de gastos Rekosol');
@@ -177,7 +180,7 @@ export function buildGastosWorkbook(gastos: Gasto[], catalogs: ExportCatalogs) {
     ref: 'A3',
     headerRow: true,
     style: { theme: TABLE_STYLE, showRowStripes: true },
-    columns: [{ name: 'Indicador' }, { name: 'Valor' }],
+    columns: withFilterButtons([{ name: 'Indicador' }, { name: 'Valor' }]),
     rows: [
       ['Gastos exportados', detailRows.length],
       ['Monto neto total', resumenSheet.getCell('B5').value],

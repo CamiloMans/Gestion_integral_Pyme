@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import JSZip from 'jszip';
 import { buildGastosWorkbook } from './gastos-excel';
 
 const catalogs = {
@@ -10,7 +11,7 @@ const catalogs = {
 };
 
 describe('buildGastosWorkbook', () => {
-  it('crea tablas profesionales con datos relacionados, totales y campos opcionales', () => {
+  it('crea tablas profesionales con datos relacionados, totales y campos opcionales', async () => {
     const workbook = buildGastosWorkbook([
       {
         id: 'gasto-1',
@@ -60,5 +61,11 @@ describe('buildGastosWorkbook', () => {
     expect(gastosSheet?.getCell('L4').numFmt).toContain('$');
     expect(gastosSheet?.views[0].state).toBe('frozen');
     expect(gastosSheet?.views[0].ySplit).toBe(3);
+    expect(gastosSheet?.getTable('TablaGastos')?.table.columns.every((column) => column.filterButton)).toBe(true);
+
+    const zip = await JSZip.loadAsync(await workbook.xlsx.writeBuffer());
+    const tableXml = await zip.file('xl/tables/table1.xml')?.async('string');
+    expect(tableXml).toContain('hiddenButton="0"');
+    expect(tableXml).not.toContain('hiddenButton="1"');
   });
 });
