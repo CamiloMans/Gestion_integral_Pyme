@@ -7,6 +7,7 @@ import { GastoModal } from '@/components/GastoModal';
 import { formatCurrency, formatDate, Gasto } from '@/data/mockData';
 import { mesKeyDeFecha } from '@/lib/date-format';
 import { nuevoIntentoId } from '@/lib/gastos-duplicados';
+import { resumirGastos } from '@/lib/gastos-resumen';
 import { duplicadosDelError, type GastoEquivalente } from '@/services/postgresApi';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -415,6 +416,8 @@ export default function Gastos() {
   const hasNextPage = pageEnd < filteredGastos.length;
 
   const cantidadGastosTexto = `${filteredGastos.length}`;
+  // Totales de todo el resultado filtrado, no solo de la pagina visible.
+  const resumen = useMemo(() => resumirGastos(filteredGastos), [filteredGastos]);
 
   const nombreRegistradorActual = useMemo(() => {
     if (!editingGasto) {
@@ -826,6 +829,27 @@ export default function Gastos() {
           </div>
         )}
       </div>
+
+      {!loading && filteredGastos.length > 0 && (
+        <div
+          className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+          aria-label="Totales del resultado filtrado"
+        >
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-xs uppercase text-muted-foreground">Movimientos</p>
+            <p className="text-2xl font-bold text-foreground">{resumen.movimientos}</p>
+            <p className="text-xs text-muted-foreground">Todo el resultado filtrado, no solo esta pagina</p>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <p className="text-xs uppercase text-muted-foreground">Monto total</p>
+            <p className="text-2xl font-bold text-emerald-600">{formatCurrency(resumen.pagado)}</p>
+            <p className="text-xs text-muted-foreground">
+              Esta pantalla lista solo pagos efectivos; los compromisos pendientes estan en Por Pagar
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden">
         <div className="overflow-x-auto">

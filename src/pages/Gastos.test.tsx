@@ -120,6 +120,43 @@ describe('Gastos', () => {
     expect(rowTexts()[0]).toContain('#N-51');
   });
 
+  it('totaliza todo el resultado filtrado, no solo la pagina visible', async () => {
+    // 60 gastos: la pagina muestra 50, los totales deben cubrir los 60.
+    const muchos = Array.from({ length: 60 }, (_, indice) => ({
+      id: `gasto-${indice + 1}`,
+      fecha: '2026-09-01',
+      empresaId: 'empresa-1',
+      categoria: 'categoria-1',
+      tipoDocumento: 'tipo-1',
+      numeroDocumento: `N-${indice + 1}`,
+      monto: 1000,
+      montoTotal: 1000,
+      origen: indice < 5 ? 'COMPROMISO' : 'INMEDIATO',
+      pagado: false,
+      createdAt: '2026-09-01T10:00:00Z',
+    }));
+    vi.mocked(postgresApi.getGastos).mockResolvedValue(muchos);
+    render(<MemoryRouter initialEntries={['/gastos']}><Gastos /></MemoryRouter>);
+
+    await screen.findByText('60 gastos encontrados');
+    const totales = screen.getByLabelText('Totales del resultado filtrado');
+
+    expect(totales).toHaveTextContent('60');
+    expect(totales).toHaveTextContent('$55.000');
+  });
+
+  it('reduce los totales al filtrar', async () => {
+    render(<MemoryRouter initialEntries={['/gastos']}><Gastos /></MemoryRouter>);
+
+    await screen.findByText('2 gastos encontrados');
+    fireEvent.change(screen.getByPlaceholderText('Buscar gasto...'), { target: { value: 'F-1' } });
+
+    await screen.findByText('1 gastos encontrados');
+    const totales = screen.getByLabelText('Totales del resultado filtrado');
+    expect(totales).toHaveTextContent('$1.000');
+    expect(totales).not.toHaveTextContent('$3.000');
+  });
+
   it('muestra la fecha del gasto sin correr el dia', async () => {
     // Regresion: la lista mostraba 28-10-2026 para un gasto guardado el 2026-10-29.
     vi.mocked(postgresApi.getGastos).mockResolvedValue([
