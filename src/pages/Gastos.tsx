@@ -5,12 +5,13 @@ import { PageHeader } from '@/components/PageHeader';
 import { CategoryBadge } from '@/components/CategoryBadge';
 import { GastoModal } from '@/components/GastoModal';
 import { formatCurrency, formatDate, Gasto } from '@/data/mockData';
+import { mesKeyDeFecha } from '@/lib/date-format';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare, Plus, Upload, Download } from 'lucide-react';
+import { Search, Filter, Pencil, Trash2, FileText, Paperclip, MessageSquare, Plus, Upload, Download, ChevronDown, ChevronUp } from 'lucide-react';
 import { DocumentoViewer } from '@/components/DocumentoViewer';
 import { DetalleGastoDialog } from '@/components/DetalleGastoDialog';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -21,6 +22,21 @@ import { hasPermission, PERMISSIONS } from '@/lib/access-control';
 
 const PAGE_SIZE = 50;
 const EMPRESA_NO_INFORMADA_LABEL = 'Empresa no informada';
+const textCollator = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+
+type GastoSortKey =
+  | 'createdAt'
+  | 'proyecto'
+  | 'categoria'
+  | 'empresa'
+  | 'documento'
+  | 'montoNeto'
+  | 'iva'
+  | 'montoTotal'
+  | 'origen'
+  | 'fecha';
+
+type SortDirection = 'asc' | 'desc';
 
 function sortGastosByFechaDesc(items: Gasto[]) {
   const toTime = (value?: string) => {
@@ -81,6 +97,8 @@ export default function Gastos() {
   const [confirmTitle, setConfirmTitle] = useState('');
   const [confirmDescription, setConfirmDescription] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortKey, setSortKey] = useState<GastoSortKey>('createdAt');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -282,6 +300,19 @@ export default function Gastos() {
     return sortByNombre(proyectosData);
   }, [proyectosData]);
 
+  const empresaNombrePorId = useMemo(
+    () => new Map(empresasData.map((empresa) => [String(empresa.id), empresa.razonSocial])),
+    [empresasData],
+  );
+  const proyectoNombrePorId = useMemo(
+    () => new Map(proyectosData.map((proyecto) => [String(proyecto.id), proyecto.nombre])),
+    [proyectosData],
+  );
+  const categoriaNombrePorId = useMemo(
+    () => new Map(categoriasData.map((categoria) => [String(categoria.id), categoria.nombre])),
+    [categoriasData],
+  );
+
   const gastoCumpleFiltros = useCallback((gasto: Gasto) => {
     const empresa = empresasData.find((item) => item.id === gasto.empresaId);
     const proyecto = gasto.proyectoId
@@ -305,14 +336,9 @@ export default function Gastos() {
 
     let matchesMes = true;
     if (filterMes !== 'all' && gasto.fecha) {
-      try {
-        const fechaGasto = new Date(gasto.fecha);
-        if (!Number.isNaN(fechaGasto.getTime())) {
-          const mesGasto = `${fechaGasto.getFullYear()}-${String(fechaGasto.getMonth() + 1).padStart(2, '0')}`;
-          matchesMes = mesGasto === filterMes;
-        }
-      } catch {
-        matchesMes = true;
+      const mesGasto = mesKeyDeFecha(gasto.fecha);
+      if (mesGasto) {
+        matchesMes = mesGasto === filterMes;
       }
     }
 
@@ -330,12 +356,49 @@ export default function Gastos() {
   ]);
 
   const filteredGastos = useMemo(() => {
-    return sortGastosByFechaDesc(gastos.filter(gastoCumpleFiltros));
-  }, [gastos, gastoCumpleFiltros]);
+    const getDateValue = (value?: string) => {
+      const timestamp = new Date(value || '').getTime();
+      return Number.isNaN(timestamp) ? null : timestamp;
+    };
+    const getSortValue = (gasto: Gasto): string | number | null => {
+      switch (sortKey) {
+        case 'createdAt': return getDateValue(gasto.createdAt);
+        case 'proyecto': return proyectoNombrePorId.get(String(gasto.proyectoId || '')) || null;
+        case 'categoria': return categoriaNombrePorId.get(String(gasto.categoria)) || null;
+        case 'empresa': return empresaNombrePorId.get(String(gasto.empresaId || '')) || null;
+        case 'documento': return gasto.numeroDocumento?.trim() || null;
+        case 'montoNeto': return gasto.montoNeto ?? gasto.monto ?? null;
+        case 'iva': return gasto.iva ?? null;
+        case 'montoTotal': return gasto.montoTotal ?? gasto.monto ?? null;
+        case 'origen': return gasto.origen === 'COMPROMISO' ? 'Comprometido' : 'Inmediato';
+        case 'fecha': return getDateValue(gasto.fecha);
+      }
+    };
+
+    return gastos.filter(gastoCumpleFiltros).sort((left, right) => {
+      const leftValue = getSortValue(left);
+      const rightValue = getSortValue(right);
+      if (leftValue === null) return rightValue === null ? 0 : 1;
+      if (rightValue === null) return -1;
+      const result = typeof leftValue === 'string' && typeof rightValue === 'string'
+        ? textCollator.compare(leftValue, rightValue)
+        : Number(leftValue) - Number(rightValue);
+      return sortDirection === 'asc' ? result : -result;
+    });
+  }, [categoriaNombrePorId, empresaNombrePorId, gastoCumpleFiltros, gastos, proyectoNombrePorId, sortDirection, sortKey]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterCategoria, filterEmpresa, filterTipoDoc, filterUsuario, filterProyecto, filterMes]);
+  }, [searchTerm, filterCategoria, filterEmpresa, filterTipoDoc, filterUsuario, filterProyecto, filterMes, sortDirection, sortKey]);
+
+  const handleSort = (nextKey: GastoSortKey) => {
+    if (sortKey === nextKey) {
+      setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection('asc');
+  };
 
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageEnd = pageStart + PAGE_SIZE;
@@ -397,13 +460,9 @@ export default function Gastos() {
     const fechas = new Set<string>();
 
     gastos.forEach((gasto) => {
-      try {
-        const fecha = new Date(gasto.fecha);
-        if (!Number.isNaN(fecha.getTime())) {
-          fechas.add(`${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`);
-        }
-      } catch {
-        return;
+      const mesKey = mesKeyDeFecha(gasto.fecha);
+      if (mesKey) {
+        fechas.add(mesKey);
       }
     });
 
@@ -575,6 +634,30 @@ export default function Gastos() {
     }
   };
 
+  const SortableTableHead = ({ label, value, className = '' }: { label: string; value: GastoSortKey; className?: string }) => {
+    const isActive = sortKey === value;
+    const nextDirection = isActive && sortDirection === 'asc' ? 'descendente' : 'ascendente';
+
+    return (
+      <TableHead
+        className={`font-semibold ${className}`}
+        aria-sort={isActive ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        <button
+          type="button"
+          onClick={() => handleSort(value)}
+          className="flex min-h-10 w-full items-center gap-1 text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          aria-label={`Ordenar por ${label} ${nextDirection}`}
+        >
+          <span>{label}</span>
+          {isActive && (sortDirection === 'asc'
+            ? <ChevronUp aria-hidden="true" className="h-4 w-4" />
+            : <ChevronDown aria-hidden="true" className="h-4 w-4" />)}
+        </button>
+      </TableHead>
+    );
+  };
+
   return (
     <Layout onNewGasto={() => setModalOpen(true)}>
       <PageHeader
@@ -715,17 +798,17 @@ export default function Gastos() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold">CREADO</TableHead>
-                <TableHead className="font-semibold">PROYECTO</TableHead>
-                <TableHead className="font-semibold">CATEGORIA</TableHead>
-                <TableHead className="font-semibold">EMPRESA</TableHead>
-                <TableHead className="font-semibold">DOCUMENTO</TableHead>
-                <TableHead className="font-semibold text-right">MONTO NETO</TableHead>
-                <TableHead className="font-semibold text-right">IVA</TableHead>
-                <TableHead className="font-semibold text-right">MONTO TOTAL</TableHead>
-                <TableHead className="font-semibold text-center">ORIGEN</TableHead>
+                <SortableTableHead label="CREADO" value="createdAt" />
+                <SortableTableHead label="PROYECTO" value="proyecto" />
+                <SortableTableHead label="CATEGORIA" value="categoria" />
+                <SortableTableHead label="EMPRESA" value="empresa" />
+                <SortableTableHead label="DOCUMENTO" value="documento" />
+                <SortableTableHead label="MONTO NETO" value="montoNeto" className="text-right" />
+                <SortableTableHead label="IVA" value="iva" className="text-right" />
+                <SortableTableHead label="MONTO TOTAL" value="montoTotal" className="text-right" />
+                <SortableTableHead label="ORIGEN" value="origen" className="text-center" />
                 <TableHead className="font-semibold text-center">ACCIONES</TableHead>
-                <TableHead className="font-semibold">FECHA</TableHead>
+                <SortableTableHead label="FECHA" value="fecha" />
               </TableRow>
             </TableHeader>
             <TableBody>

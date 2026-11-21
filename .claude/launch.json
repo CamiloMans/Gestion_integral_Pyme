@@ -6,7 +6,7 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3002,
-      "cwd": "C:\\Users\\Camilo Mansilla\\Desktop\\Proyectos\\Rekosol - Gestion Gastos - Copy"
+      "cwd": "C:\\Users\\DELL\\Desktop\\Proyectos\\Rekosol"
     },
     {
       "name": "Myma Web",

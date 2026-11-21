@@ -43,6 +43,21 @@ const gastos = [
   { id: 'gasto-2', fecha: '2026-09-16', empresaId: 'empresa-1', categoria: 'categoria-1', tipoDocumento: 'tipo-1', numeroDocumento: 'F-2', monto: 2000, createdAt: '2026-09-16T10:00:00Z' },
 ];
 
+const bootstrapOrdenable = {
+  ...bootstrap,
+  proyectos: [
+    { id: 'proyecto-1', nombre: 'Proyecto Zeta', createdAt: '2026-01-01' },
+    { id: 'proyecto-2', nombre: 'Proyecto Alfa', createdAt: '2026-01-01' },
+  ],
+};
+
+const gastosOrdenables = [
+  { id: 'gasto-antiguo', fecha: '2026-09-10', empresaId: 'empresa-1', proyectoId: 'proyecto-1', categoria: 'categoria-1', tipoDocumento: 'tipo-1', numeroDocumento: 'F-20', monto: 2000, montoTotal: 2000, createdAt: '2026-09-10T10:00:00Z' },
+  { id: 'gasto-reciente', fecha: '2026-09-20', empresaId: 'empresa-1', proyectoId: 'proyecto-2', categoria: 'categoria-1', tipoDocumento: 'tipo-1', numeroDocumento: 'F-3', monto: 300, montoTotal: 300, createdAt: '2026-09-20T10:00:00Z' },
+];
+
+const rowTexts = () => screen.getAllByRole('row').slice(1).map((row) => row.textContent || '');
+
 describe('Gastos', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,5 +76,59 @@ describe('Gastos', () => {
     fireEvent.click(screen.getByRole('button', { name: /exportar excel/i }));
 
     await waitFor(() => expect(downloadGastosExcel).toHaveBeenCalledWith(gastos, bootstrap));
+  });
+
+  it('ordena por fecha inicial, texto, numero y alterna direccion al repetir encabezado', async () => {
+    vi.mocked(postgresApi.getBootstrap).mockResolvedValue(bootstrapOrdenable);
+    vi.mocked(postgresApi.getGastos).mockResolvedValue(gastosOrdenables);
+    render(<MemoryRouter initialEntries={['/gastos']}><Gastos /></MemoryRouter>);
+
+    await screen.findByText('Proyecto Alfa');
+    expect(rowTexts()[0]).toContain('#F-3');
+
+    fireEvent.click(screen.getByRole('button', { name: /ordenar por creado ascendente/i }));
+    expect(rowTexts()[0]).toContain('#F-20');
+
+    fireEvent.click(screen.getByRole('button', { name: /ordenar por proyecto ascendente/i }));
+    expect(rowTexts()[0]).toContain('Proyecto Alfa');
+
+    fireEvent.click(screen.getByRole('button', { name: /ordenar por monto total ascendente/i }));
+    expect(rowTexts()[0]).toContain('#F-3');
+    fireEvent.click(screen.getByRole('button', { name: /ordenar por monto total descendente/i }));
+    expect(rowTexts()[0]).toContain('#F-20');
+  });
+
+  it('ordena todo el resultado antes de aplicar paginacion', async () => {
+    const gastosPaginados = Array.from({ length: 51 }, (_, index) => ({
+      id: `gasto-${index + 1}`,
+      fecha: '2026-09-01',
+      empresaId: 'empresa-1',
+      categoria: 'categoria-1',
+      tipoDocumento: 'tipo-1',
+      numeroDocumento: `N-${index + 1}`,
+      monto: index + 1,
+      createdAt: `2026-09-01T${String(index % 24).padStart(2, '0')}:00:00Z`,
+    }));
+    vi.mocked(postgresApi.getGastos).mockResolvedValue(gastosPaginados);
+    render(<MemoryRouter initialEntries={['/gastos']}><Gastos /></MemoryRouter>);
+
+    await screen.findByText('51 gastos encontrados');
+    fireEvent.click(screen.getByRole('button', { name: /ordenar por documento ascendente/i }));
+    fireEvent.click(screen.getByRole('button', { name: /ordenar por documento descendente/i }));
+
+    expect(rowTexts()[0]).toContain('#N-51');
+  });
+
+  it('muestra la fecha del gasto sin correr el dia', async () => {
+    // Regresion: la lista mostraba 28-10-2026 para un gasto guardado el 2026-10-29.
+    vi.mocked(postgresApi.getGastos).mockResolvedValue([
+      // createdAt en otro dia: '29-10-2026' solo puede venir de `fecha`.
+      { id: 'gasto-bryancar', fecha: '2026-10-29', empresaId: 'empresa-1', categoria: 'categoria-1', tipoDocumento: 'tipo-1', numeroDocumento: 'F-440300', monto: 440300, montoTotal: 440300, createdAt: '2026-11-03T21:17:36.394Z' },
+    ]);
+    render(<MemoryRouter initialEntries={['/gastos']}><Gastos /></MemoryRouter>);
+
+    await screen.findByText('1 gastos encontrados');
+    expect(rowTexts()[0]).toContain('29-10-2026');
+    expect(rowTexts()[0]).not.toContain('28-10-2026');
   });
 });

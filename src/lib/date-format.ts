@@ -55,3 +55,12 @@ export const parseDateOnly = (value?: string | null): Date | null => {
 
 /** Hoy en la zona del navegador, como 'YYYY-MM-DD'. Reemplaza new Date().toISOString().split('T')[0]. */
 export const todayDateOnly = (): string => localDateOnly(new Date());
+
+/**
+ * Clave 'YYYY-MM' de una fecha calendario, derivada del texto y sin construir un Date.
+ * `new Date('2026-11-01')` es medianoche UTC y en zonas negativas cae en el mes anterior.
+ */
+export const mesKeyDeFecha = (value?: string | null): string | null => {
+  const iso = toDateOnly(value);
+  return iso ? iso.slice(0, 7) : null;
+};

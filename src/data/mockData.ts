@@ -130,10 +130,29 @@ export const formatCurrency = (amount: number): string => {
   }).format(amount);
 };
 
+/**
+ * Fecha calendario exacta ('YYYY-MM-DD', sin hora). No incluye timestamps ISO
+ * con 'T', que representan un instante y si deben convertirse a la zona local.
+ */
+const DATE_ONLY_EXACT = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Convierte una fecha calendario a mediodia local. Evita que `new Date('2026-10-29')`,
+ * que el estandar interpreta como medianoche UTC, retroceda un dia en zonas negativas
+ * como America/Santiago (UTC-3).
+ */
+const parseCalendarDate = (dateString: string): Date | null => {
+  const match = dateString.match(DATE_ONLY_EXACT);
+  if (!match) return null;
+
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0, 0);
+};
+
 export const formatDate = (dateString: string): string => {
   if (!dateString) return '-';
   try {
-    const date = new Date(dateString);
+    const date = parseCalendarDate(dateString) ?? new Date(dateString);
     if (isNaN(date.getTime())) {
       return '-';
     }
@@ -151,7 +170,7 @@ export const formatDate = (dateString: string): string => {
 export const formatDateLong = (dateString: string): string => {
   if (!dateString) return '-';
   try {
-    const date = new Date(dateString);
+    const date = parseCalendarDate(dateString) ?? new Date(dateString);
     if (isNaN(date.getTime())) {
       return '-';
     }

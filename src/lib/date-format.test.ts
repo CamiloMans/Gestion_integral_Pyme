@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDateOnly, parseDateOnly, toDateOnly, todayDateOnly } from './date-format';
+import { formatDateOnly, mesKeyDeFecha, parseDateOnly, toDateOnly, todayDateOnly } from './date-format';
 
 describe('toDateOnly', () => {
   it('deja pasar una fecha calendario', () => {
@@ -51,5 +51,20 @@ describe('formatDateOnly (sin cambios)', () => {
     expect(formatDateOnly('2026-09-04')).toBe('04/09/2026');
     expect(formatDateOnly('2026-09-04T00:00:00.000Z')).toBe('04/09/2026');
     expect(formatDateOnly(null)).toBe('-');
+  });
+});
+
+describe('mesKeyDeFecha', () => {
+  it('agrupa el primero de mes en su propio mes', () => {
+    // Regresion: `new Date('2026-11-01')` en America/Santiago caia en 2026-10.
+    expect(mesKeyDeFecha('2026-11-01')).toBe('2026-11');
+  });
+
+  it('acepta una fecha calendario cualquiera', () => {
+    expect(mesKeyDeFecha('2026-10-29')).toBe('2026-10');
+  });
+
+  it.each([undefined, null, '', 'no-es-fecha'])('devuelve null para %p', (value) => {
+    expect(mesKeyDeFecha(value as string | null | undefined)).toBeNull();
   });
 });
