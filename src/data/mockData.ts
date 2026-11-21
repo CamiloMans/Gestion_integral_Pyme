@@ -58,7 +58,7 @@ export interface Gasto {
   creadoPorNombre?: string;
   actualizadoPor?: string;
   actualizadoPorNombre?: string;
-  archivosAdjuntos?: Array<{ id?: string; nombre: string; url: string; tipo: string; file?: File }>;
+  archivosAdjuntos?: Array<{ id?: string; nombre: string; url: string; tipo: string; tamano?: number; file?: File }>;
 }
 
 export const categorias = [

@@ -1055,6 +1055,10 @@ function mapGasto(row) {
         nombre: archivo.nombre,
         url: archivo.url,
         tipo: archivo.tipo || 'application/octet-stream',
+        // Solo lo trae la consulta de duplicados: sirve para comparar adjuntos.
+        ...(archivo.tamano !== undefined && archivo.tamano !== null
+          ? { tamano: Number(archivo.tamano) }
+          : {}),
       })),
   };
 }
@@ -5976,6 +5980,235 @@ app.delete('/api/gastos/:id', async (req, res) => {
     res.status(500).json({
       error: error instanceof Error ? error.message : 'Error al eliminar gasto',
     });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Gastos duplicados
+//
+// Un grupo candidato es un conjunto de gastos que comparten empresa, numero de
+// documento, fecha y monto total. La deteccion es solo informativa: el usuario
+// decide si borra las copias sobrantes o si declara que son gastos distintos.
+// ---------------------------------------------------------------------------
+
+const GASTO_DUPLICADO_DESCARTE_TABLE = 'fct_gasto_duplicado_descarte';
+let gastoDuplicadoDescarteSchemaPromise = null;
+
+async function ensureGastoDuplicadoDescarteSchema() {
+  if (gastoDuplicadoDescarteSchemaPromise) {
+    return gastoDuplicadoDescarteSchemaPromise;
+  }
+
+  gastoDuplicadoDescarteSchemaPromise = (async () => {
+    await query(`
+      create table if not exists ${GASTO_DUPLICADO_DESCARTE_TABLE} (
+        id uuid primary key,
+        tenant_id uuid not null references tenants(id) on delete cascade,
+        firma text not null,
+        gasto_ids uuid[] not null,
+        created_by uuid references users(id),
+        created_at timestamptz not null default now(),
+        unique (tenant_id, firma)
+      )
+    `);
+  })();
+
+  return gastoDuplicadoDescarteSchemaPromise;
+}
+
+/**
+ * Firma estable de un grupo: sus ids ordenados. Si mas tarde se carga otra
+ * copia, el grupo cambia de firma y vuelve a aparecer aunque haya sido
+ * descartado antes.
+ */
+function firmaGrupoDuplicado(ids) {
+  return [...ids].map((id) => String(id)).sort().join('|');
+}
+
+async function fetchGastosByIds(tenantId, ids) {
+  if (!ids.length) {
+    return [];
+  }
+
+  const result = await query(
+    `
+      select
+        g.*,
+        c.nombre as colaborador_nombre,
+        uc.nombre as created_by_nombre,
+        uu.nombre as updated_by_nombre,
+        coalesce(
+          json_agg(
+            json_build_object(
+              'id', d.id,
+              'nombre', d.nombre_archivo,
+              'url', '/api/documentos/' || d.id || '/contenido',
+              'tipo', d.mime_type,
+              'tamano', d.size_bytes
+            )
+            order by gd.created_at asc
+          ) filter (where d.id is not null),
+          '[]'::json
+        ) as archivos_adjuntos
+      from fct_gasto g
+      left join dim_colaborador c
+        on c.id = g.colaborador_id
+      left join users uc
+        on uc.id = g.created_by
+      left join users uu
+        on uu.id = g.updated_by
+      left join ${GASTO_DOCUMENTOS_TABLE} gd
+        on gd.tenant_id = g.tenant_id
+       and gd.gasto_id = g.id
+      left join ${DOCUMENTOS_TABLE} d
+        on d.tenant_id = g.tenant_id
+       and d.id = gd.documento_id
+      where g.tenant_id = $1
+        and g.id = any($2::uuid[])
+      group by g.id, c.nombre, uc.nombre, uu.nombre
+    `,
+    [tenantId, ids],
+  );
+
+  return result.rows.map(mapGasto);
+}
+
+app.get('/api/gastos/duplicados', async (_req, res) => {
+  try {
+    const tenant = await getTenant();
+    await ensureGastoDocumentosSchema();
+    await ensureGastoDuplicadoDescarteSchema();
+
+    const grupos = await query(
+      `
+        select
+          g.empresa_id,
+          g.numero_documento,
+          g.fecha,
+          g.monto_total,
+          array_agg(g.id order by g.created_at) as ids,
+          max(e.razon_social) as empresa_nombre,
+          min(g.created_at) as primera_carga,
+          max(g.created_at) as ultima_carga
+        from fct_gasto g
+        left join dim_empresa e
+          on e.id = g.empresa_id
+        where g.tenant_id = $1
+          and g.numero_documento is not null
+          and btrim(g.numero_documento) <> ''
+        group by g.empresa_id, g.numero_documento, g.fecha, g.monto_total
+        having count(*) > 1
+        order by max(g.created_at) desc
+      `,
+      [tenant.id],
+    );
+
+    const todosLosIds = grupos.rows.flatMap((row) => row.ids);
+    const gastos = await fetchGastosByIds(tenant.id, todosLosIds);
+    const gastoPorId = new Map(gastos.map((gasto) => [gasto.id, gasto]));
+
+    const descartes = await query(
+      `
+        select d.firma, d.created_at, u.nombre as descartado_por_nombre
+        from ${GASTO_DUPLICADO_DESCARTE_TABLE} d
+        left join users u
+          on u.id = d.created_by
+        where d.tenant_id = $1
+      `,
+      [tenant.id],
+    );
+    const descartePorFirma = new Map(descartes.rows.map((row) => [row.firma, row]));
+
+    res.json(
+      grupos.rows.map((row) => {
+        const firma = firmaGrupoDuplicado(row.ids);
+        const descarte = descartePorFirma.get(firma) || null;
+
+        return {
+          firma,
+          empresaId: row.empresa_id,
+          empresaNombre: row.empresa_nombre || null,
+          numeroDocumento: row.numero_documento,
+          fecha: row.fecha,
+          montoTotal: Number(row.monto_total),
+          primeraCarga: row.primera_carga,
+          ultimaCarga: row.ultima_carga,
+          descartado: Boolean(descarte),
+          descartadoEn: descarte ? descarte.created_at : null,
+          descartadoPorNombre: descarte ? descarte.descartado_por_nombre : null,
+          gastos: row.ids.map((id) => gastoPorId.get(id)).filter(Boolean),
+        };
+      }),
+    );
+  } catch (error) {
+    sendErrorResponse(res, error, 'Error al obtener los gastos duplicados');
+  }
+});
+
+app.post('/api/gastos/duplicados/descartes', async (req, res) => {
+  try {
+    const tenant = await getTenant();
+    await ensureGastoDuplicadoDescarteSchema();
+
+    const payload = z
+      .object({
+        gastoIds: z.array(z.string().uuid()).min(2),
+        descartado: z.boolean().default(true),
+      })
+      .parse(req.body || {});
+
+    const existentes = await query(
+      `
+        select id
+        from fct_gasto
+        where tenant_id = $1
+          and id = any($2::uuid[])
+      `,
+      [tenant.id, payload.gastoIds],
+    );
+
+    if (existentes.rowCount !== payload.gastoIds.length) {
+      return res.status(400).json({
+        error: 'Alguno de los gastos indicados no existe en este tenant.',
+      });
+    }
+
+    const firma = firmaGrupoDuplicado(payload.gastoIds);
+
+    if (!payload.descartado) {
+      await query(
+        `
+          delete from ${GASTO_DUPLICADO_DESCARTE_TABLE}
+          where tenant_id = $1
+            and firma = $2
+        `,
+        [tenant.id, firma],
+      );
+
+      return res.json({ firma, descartado: false });
+    }
+
+    await query(
+      `
+        insert into ${GASTO_DUPLICADO_DESCARTE_TABLE} (
+          id, tenant_id, firma, gasto_ids, created_by
+        )
+        values ($1, $2, $3, $4::uuid[], $5)
+        on conflict (tenant_id, firma) do nothing
+      `,
+      [randomUUID(), tenant.id, firma, payload.gastoIds, req.auth?.user?.id || null],
+    );
+
+    res.status(201).json({ firma, descartado: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Payload invalido',
+        details: error.flatten(),
+      });
+    }
+
+    sendErrorResponse(res, error, 'Error al actualizar el descarte de duplicados');
   }
 });
 

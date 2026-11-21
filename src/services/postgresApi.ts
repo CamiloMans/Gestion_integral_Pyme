@@ -3,6 +3,22 @@ import type { PermissionKey } from '@/lib/access-control';
 
 type AuthProvider = 'microsoft' | 'google';
 
+/** Grupo de gastos que comparten empresa, numero de documento, fecha y monto total. */
+export type GrupoDuplicado = {
+  firma: string;
+  empresaId: string | null;
+  empresaNombre: string | null;
+  numeroDocumento: string;
+  fecha: string;
+  montoTotal: number;
+  primeraCarga: string | null;
+  ultimaCarga: string | null;
+  descartado: boolean;
+  descartadoEn: string | null;
+  descartadoPorNombre: string | null;
+  gastos: Gasto[];
+};
+
 type TenantInfo = {
   id: string;
   slug: string;
@@ -932,6 +948,18 @@ export const postgresApi = {
   deleteGasto(id: string) {
     return request<void>(`/api/gastos/${id}`, {
       method: 'DELETE',
+    });
+  },
+
+  getGastosDuplicados() {
+    return request<GrupoDuplicado[]>('/api/gastos/duplicados');
+  },
+
+  setDescarteDuplicado(gastoIds: string[], descartado: boolean) {
+    return request<{ firma: string; descartado: boolean }>('/api/gastos/duplicados/descartes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gastoIds, descartado }),
     });
   },
 
