@@ -6,6 +6,8 @@ import { CategoryBadge } from '@/components/CategoryBadge';
 import { GastoModal } from '@/components/GastoModal';
 import { formatCurrency, formatDate, Gasto } from '@/data/mockData';
 import { mesKeyDeFecha } from '@/lib/date-format';
+import { nuevoIntentoId } from '@/lib/gastos-duplicados';
+import { duplicadosDelError, type GastoEquivalente } from '@/services/postgresApi';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -93,6 +95,12 @@ export default function Gastos() {
   const [detalleGastoOpen, setDetalleGastoOpen] = useState(false);
   const [gastoSeleccionado, setGastoSeleccionado] = useState<Gasto | undefined>();
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [duplicadoDialogOpen, setDuplicadoDialogOpen] = useState(false);
+  const [duplicadosDetectados, setDuplicadosDetectados] = useState<GastoEquivalente[]>([]);
+  const gastoPendienteRef = useRef<Omit<Gasto, 'id'> | null>(null);
+  // Mismo id en cada reintento del guardado actual: evita crear dos gastos si
+  // la respuesta se pierde y el usuario vuelve a presionar Guardar.
+  const intentoGuardadoRef = useRef<string | null>(null);
   const [gastoAEliminar, setGastoAEliminar] = useState<string | null>(null);
   const [confirmTitle, setConfirmTitle] = useState('');
   const [confirmDescription, setConfirmDescription] = useState('');
@@ -480,8 +488,12 @@ export default function Gastos() {
       });
   }, [gastos]);
 
-  const handleSaveGasto = async (newGasto: Omit<Gasto, 'id'>) => {
+  const handleSaveGasto = async (newGasto: Omit<Gasto, 'id'>, permitirDuplicado = false) => {
     setLoadingSave(true);
+
+    if (!intentoGuardadoRef.current) {
+      intentoGuardadoRef.current = nuevoIntentoId();
+    }
 
     try {
       if (editingGasto) {
@@ -496,7 +508,10 @@ export default function Gastos() {
           variant: 'success',
         });
       } else {
-        const creado = await postgresApi.createGasto(newGasto);
+        const creado = await postgresApi.createGasto(newGasto, {
+          intentoId: intentoGuardadoRef.current,
+          permitirDuplicado,
+        });
         setGastos((prev) => sortGastosByFechaDesc([creado, ...prev]));
         setCurrentPage(1);
         toast({
@@ -508,7 +523,17 @@ export default function Gastos() {
 
       setEditingGasto(undefined);
       setModalOpen(false);
+      intentoGuardadoRef.current = null;
     } catch (saveError) {
+      const duplicados = duplicadosDelError(saveError);
+
+      if (duplicados) {
+        gastoPendienteRef.current = newGasto;
+        setDuplicadosDetectados(duplicados);
+        setDuplicadoDialogOpen(true);
+        return;
+      }
+
       toast({
         title: 'Error',
         description: saveError instanceof Error ? saveError.message : 'Error al guardar el gasto',
@@ -517,6 +542,15 @@ export default function Gastos() {
     } finally {
       setLoadingSave(false);
     }
+  };
+
+  const guardarDeTodosModos = async () => {
+    const pendiente = gastoPendienteRef.current;
+    setDuplicadoDialogOpen(false);
+    if (!pendiente) return;
+
+    gastoPendienteRef.current = null;
+    await handleSaveGasto(pendiente, true);
   };
 
   const handleEdit = (gasto: Gasto) => {
@@ -1043,6 +1077,7 @@ export default function Gastos() {
           if (loadingSave) return;
           setModalOpen(false);
           setEditingGasto(undefined);
+          intentoGuardadoRef.current = null;
         }}
         onSave={handleSaveGasto}
         gasto={editingGasto}
@@ -1101,6 +1136,33 @@ export default function Gastos() {
         description={confirmDescription || 'Estas seguro de que deseas eliminar este gasto? Esta accion no se puede deshacer.'}
         onConfirm={confirmDelete}
         confirmText="Eliminar"
+        cancelText="Cancelar"
+      />
+
+      <ConfirmDialog
+        open={duplicadoDialogOpen}
+        onOpenChange={(open) => {
+          setDuplicadoDialogOpen(open);
+          if (!open) {
+            gastoPendienteRef.current = null;
+          }
+        }}
+        title="Ya existe un gasto igual"
+        description={
+          `Hay ${duplicadosDetectados.length} gasto(s) con la misma empresa, numero de documento, fecha y monto: ` +
+          duplicadosDetectados
+            .map((duplicado) => {
+              const cargadoEl = duplicado.createdAt
+                ? new Date(duplicado.createdAt).toLocaleString('es-CL')
+                : 'fecha de carga desconocida';
+              const autor = duplicado.creadoPorNombre ? ` por ${duplicado.creadoPorNombre}` : '';
+              return `#${duplicado.numeroDocumento} (${formatCurrency(duplicado.montoTotal)}), cargado el ${cargadoEl}${autor}`;
+            })
+            .join('; ') +
+          '. Revisa en Gestion de Gastos > Duplicados si corresponde al mismo gasto, o guardalo igual si son distintos.'
+        }
+        onConfirm={guardarDeTodosModos}
+        confirmText="Guardar igual"
         cancelText="Cancelar"
       />
     </Layout>

@@ -548,7 +548,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function buildGastoFormData(gasto: Omit<Gasto, 'id'>) {
+/** Datos de un gasto ya guardado que coincide con el que se intenta crear. */
+export type GastoEquivalente = {
+  id: string;
+  fecha: string;
+  numeroDocumento: string;
+  montoTotal: number;
+  detalle: string | null;
+  createdAt: string | null;
+  creadoPorNombre: string | null;
+};
+
+/**
+ * Control de duplicados del alta de gastos.
+ * - intentoId: mismo valor en cada reintento del mismo guardado, para que el
+ *   servidor no cree dos gastos si la respuesta se pierde.
+ * - permitirDuplicado: el usuario ya vio el aviso y decidio guardar igual.
+ */
+export type ControlDuplicadoGasto = {
+  intentoId?: string;
+  permitirDuplicado?: boolean;
+};
+
+/** Si el error es el aviso de duplicado, devuelve los gastos que ya existen. */
+export function duplicadosDelError(error: unknown): GastoEquivalente[] | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+
+  const detalles = error.details as { codigo?: string; duplicados?: GastoEquivalente[] } | null;
+  if (detalles?.codigo !== 'GASTO_DUPLICADO') return null;
+
+  return detalles.duplicados || [];
+}
+
+function buildGastoFormData(gasto: Omit<Gasto, 'id'>, control?: ControlDuplicadoGasto) {
   const formData = new FormData();
   const archivosAdjuntos = gasto.archivosAdjuntos || [];
   const existingAttachmentIds = archivosAdjuntos
@@ -556,10 +588,12 @@ function buildGastoFormData(gasto: Omit<Gasto, 'id'>) {
     .map((archivo) => archivo.id)
     .filter((id): id is string => Boolean(id));
 
-  const payload: GastoMutationPayload = {
+  const payload: GastoMutationPayload & ControlDuplicadoGasto = {
     ...gasto,
     archivosAdjuntos: undefined,
     existingAttachmentIds,
+    ...(control?.intentoId ? { intentoId: control.intentoId } : {}),
+    ...(control?.permitirDuplicado ? { permitirDuplicado: true } : {}),
   };
 
   formData.append('payload', JSON.stringify(payload));
@@ -924,10 +958,10 @@ export const postgresApi = {
     });
   },
 
-  createGasto(gasto: Omit<Gasto, 'id'>) {
+  createGasto(gasto: Omit<Gasto, 'id'>, control?: ControlDuplicadoGasto) {
     return request<Gasto>('/api/gastos', {
       method: 'POST',
-      body: buildGastoFormData(gasto),
+      body: buildGastoFormData(gasto, control),
     });
   },
 

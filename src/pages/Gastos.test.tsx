@@ -22,7 +22,8 @@ vi.mock('@/components/ConfirmDialog', () => ({ ConfirmDialog: () => <div /> }));
 vi.mock('@/components/GastoModal', () => ({ GastoModal: () => <div /> }));
 vi.mock('@/lib/gastos-excel', () => ({ downloadGastosExcel: vi.fn() }));
 
-vi.mock('@/services/postgresApi', () => ({
+vi.mock('@/services/postgresApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/postgresApi')>()),
   postgresApi: {
     getBootstrap: vi.fn(), getGastos: vi.fn(), createGasto: vi.fn(), updateGasto: vi.fn(), deleteGasto: vi.fn(),
     createProyecto: vi.fn(), createCategoria: vi.fn(), createEmpresa: vi.fn(),

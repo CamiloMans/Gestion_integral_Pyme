@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import GastosCargaMasiva from './GastosCargaMasiva';
-import { postgresApi } from '@/services/postgresApi';
+import { ApiError, postgresApi } from '@/services/postgresApi';
 
 vi.mock('@/hooks/useAppAuth', () => ({
   useAppAuth: () => ({
@@ -21,8 +21,9 @@ vi.mock('@/components/DocumentoViewer', () => ({
   DocumentoViewer: () => <div />,
 }));
 
-vi.mock('@/services/postgresApi', async () => {
+vi.mock('@/services/postgresApi', async (importOriginal) => {
   return {
+    ...(await importOriginal<typeof import('@/services/postgresApi')>()),
     postgresApi: {
       getBootstrap: vi.fn(),
       extractGastoDocument: vi.fn(),
@@ -295,6 +296,76 @@ describe('GastosCargaMasiva', () => {
       numeroDocumento: '123',
       montoTotal: 1000,
     });
+  });
+
+  it('marca la fila como duplicada y la guarda igual si el usuario insiste', async () => {
+    vi.mocked(postgresApi.extractGastoDocument).mockResolvedValue({
+      fecha: '2026-05-30',
+      tipoDocumento: 'FACTURA',
+      numeroDocumento: '123',
+      empresaNombre: 'PROVEEDOR UNO SPA',
+      empresaRut: '76.123.456-7',
+      emisorNombre: null,
+      emisorRut: null,
+      receptorNombre: null,
+      receptorRut: null,
+      montoNeto: 840,
+      iva: 160,
+      montoTotal: 1000,
+      detalle: 'Compra materiales',
+      confidence: 0.91,
+      warnings: [],
+    });
+    vi.mocked(postgresApi.createGasto)
+      .mockRejectedValueOnce(new ApiError('Ya existe un gasto', 409, {
+        codigo: 'GASTO_DUPLICADO',
+        duplicados: [{
+          id: 'gasto-previo',
+          fecha: '2026-05-30',
+          numeroDocumento: '123',
+          montoTotal: 1000,
+          detalle: null,
+          createdAt: '2026-05-30T10:00:00Z',
+          creadoPorNombre: 'Tester',
+        }],
+      }))
+      .mockResolvedValueOnce({
+        id: 'gasto-1',
+        fecha: '2026-05-30',
+        categoria: 'categoria-1',
+        empresaId: 'empresa-1',
+        tipoDocumento: 'tipo-1',
+        numeroDocumento: '123',
+        monto: 1000,
+        montoTotal: 1000,
+      });
+
+    const { container } = renderPage();
+    await screen.findByText('Seleccionar documentos');
+
+    const input = container.querySelector('#bulk-gasto-files') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(['a'], 'ok.pdf', { type: 'application/pdf' })] },
+    });
+
+    await waitFor(() => expect(screen.getByText(/Conf\. 91%/)).toBeInTheDocument());
+
+    applyCategoriaYProyecto(container);
+    fireEvent.click(screen.getAllByRole('checkbox')[1]);
+    fireEvent.click(screen.getAllByText('Guardar validados')[1]);
+
+    await screen.findByText('Duplicado');
+    expect(postgresApi.createGasto).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postgresApi.createGasto).mock.calls[0][1]?.permitirDuplicado).toBe(false);
+
+    const botonesDuplicados = screen.getAllByText('Guardar 1 duplicado(s) igual');
+    fireEvent.click(botonesDuplicados[botonesDuplicados.length - 1]);
+
+    await waitFor(() => expect(postgresApi.createGasto).toHaveBeenCalledTimes(2));
+    const primero = vi.mocked(postgresApi.createGasto).mock.calls[0][1];
+    const segundo = vi.mocked(postgresApi.createGasto).mock.calls[1][1];
+    expect(segundo?.permitirDuplicado).toBe(true);
+    expect(segundo?.intentoId).toBe(primero?.intentoId);
   });
 
   describe('comprobantes bancarios', () => {

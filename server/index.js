@@ -5697,13 +5697,135 @@ app.post('/api/gastos/extraer-documento', maybeHandleSingleFileUpload('archivo')
   }
 });
 
+// ---------------------------------------------------------------------------
+// Prevencion de gastos duplicados
+//
+// Dos mecanismos complementarios:
+//  - Aviso: si ya existe un gasto equivalente se responde 409 y el cliente
+//    decide si lo guarda igual (permitirDuplicado) o si abre el existente.
+//  - Idempotencia: el cliente manda un intentoId por intento de guardado. Si
+//    la respuesta se pierde y reintenta, se devuelve el gasto ya creado en vez
+//    de insertar otro.
+// ---------------------------------------------------------------------------
+
+const GASTO_INTENTO_TABLE = 'fct_gasto_intento';
+let gastoIntentoSchemaPromise = null;
+
+async function ensureGastoIntentoSchema() {
+  if (gastoIntentoSchemaPromise) {
+    return gastoIntentoSchemaPromise;
+  }
+
+  gastoIntentoSchemaPromise = (async () => {
+    await query(`
+      create table if not exists ${GASTO_INTENTO_TABLE} (
+        tenant_id uuid not null references tenants(id) on delete cascade,
+        intento_id uuid not null,
+        gasto_id uuid not null references fct_gasto(id) on delete cascade,
+        created_at timestamptz not null default now(),
+        primary key (tenant_id, intento_id)
+      )
+    `);
+  })();
+
+  return gastoIntentoSchemaPromise;
+}
+
+const gastoControlDuplicadoSchema = z.object({
+  intentoId: z.string().uuid().optional().nullable(),
+  permitirDuplicado: z.coerce.boolean().optional().default(false),
+});
+
+/**
+ * Gastos ya guardados que comparten empresa, numero de documento, fecha y
+ * monto total. Sin numero de documento no se evalua: las boletas sin folio se
+ * repiten de forma legitima.
+ */
+async function buscarGastosEquivalentes(tenantId, campos, excluirId = null) {
+  const numeroDocumento = String(campos.numeroDocumento || '').trim();
+
+  if (!numeroDocumento || !campos.empresaId || !campos.fecha) {
+    return [];
+  }
+
+  const result = await query(
+    `
+      select
+        g.id,
+        g.fecha::text as fecha,
+        g.numero_documento,
+        g.monto_total,
+        g.detalle,
+        g.created_at,
+        u.nombre as created_by_nombre
+      from fct_gasto g
+      left join users u
+        on u.id = g.created_by
+      where g.tenant_id = $1
+        and g.empresa_id = $2
+        and g.numero_documento = $3
+        and g.fecha = $4
+        and g.monto_total = $5
+        and ($6::uuid is null or g.id <> $6::uuid)
+      order by g.created_at
+    `,
+    [tenantId, campos.empresaId, numeroDocumento, campos.fecha, campos.montoTotal, excluirId],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    fecha: row.fecha,
+    numeroDocumento: row.numero_documento,
+    montoTotal: Number(row.monto_total),
+    detalle: row.detalle || null,
+    createdAt: row.created_at,
+    creadoPorNombre: row.created_by_nombre || null,
+  }));
+}
+
 app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
   try {
     const tenant = await getTenant();
     await ensureGastoDocumentosSchema();
+    await ensureGastoIntentoSchema();
 
-    const payload = gastoInputSchema.parse(parseGastoPayload(req));
+    const payloadBruto = parseGastoPayload(req);
+    const control = gastoControlDuplicadoSchema.parse(payloadBruto);
+    const payload = gastoInputSchema.parse(payloadBruto);
     const gastoFields = await normalizeGastoForPersistence(tenant.id, payload);
+
+    // Reintento del mismo intento de guardado: devuelve lo ya creado.
+    if (control.intentoId) {
+      const intentoPrevio = await query(
+        `
+          select gasto_id
+          from ${GASTO_INTENTO_TABLE}
+          where tenant_id = $1
+            and intento_id = $2
+        `,
+        [tenant.id, control.intentoId],
+      );
+
+      if (intentoPrevio.rows[0]) {
+        const yaCreado = await fetchGastoById(tenant.id, intentoPrevio.rows[0].gasto_id);
+        if (yaCreado) {
+          return res.status(200).json(yaCreado);
+        }
+      }
+    }
+
+    if (!control.permitirDuplicado) {
+      const equivalentes = await buscarGastosEquivalentes(tenant.id, gastoFields);
+
+      if (equivalentes.length > 0) {
+        return res.status(409).json({
+          error: 'Ya existe un gasto con la misma empresa, numero de documento, fecha y monto.',
+          codigo: 'GASTO_DUPLICADO',
+          duplicados: equivalentes,
+        });
+      }
+    }
+
     const uploadedFilesInput = Array.isArray(req.files) ? req.files : [];
 
     const gastoId = randomUUID();
@@ -5769,6 +5891,18 @@ app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
 
       await attachUploadedFilesToGasto((text, params) => client.query(text, params), tenant.id, gastoId, uploadedFiles);
 
+      if (control.intentoId) {
+        // Clave primaria (tenant_id, intento_id): si dos peticiones del mismo
+        // intento corren a la vez, la segunda falla con 23505 y no inserta.
+        await client.query(
+          `
+            insert into ${GASTO_INTENTO_TABLE} (tenant_id, intento_id, gasto_id)
+            values ($1, $2, $3)
+          `,
+          [tenant.id, control.intentoId, gastoId],
+        );
+      }
+
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -5792,6 +5926,32 @@ app.post('/api/gastos', maybeHandleMultipartUploads, async (req, res) => {
       return res.status(413).json({
         error: `Uno de los archivos supera el limite de ${MAX_GASTO_ATTACHMENT_SIZE_MB} MB`,
       });
+    }
+
+    // Carrera entre dos envios del mismo intento: gana el primero.
+    if (error?.code === '23505' && String(error.table || '') === GASTO_INTENTO_TABLE) {
+      try {
+        const tenant = await getTenant();
+        const intentoId = gastoControlDuplicadoSchema.parse(parseGastoPayload(req)).intentoId;
+        const intentoPrevio = await query(
+          `
+            select gasto_id
+            from ${GASTO_INTENTO_TABLE}
+            where tenant_id = $1
+              and intento_id = $2
+          `,
+          [tenant.id, intentoId],
+        );
+
+        if (intentoPrevio.rows[0]) {
+          const yaCreado = await fetchGastoById(tenant.id, intentoPrevio.rows[0].gasto_id);
+          if (yaCreado) {
+            return res.status(200).json(yaCreado);
+          }
+        }
+      } catch {
+        // Si la recuperacion falla, cae al manejo de error habitual.
+      }
     }
 
     sendErrorResponse(res, error, 'Error al crear gasto');

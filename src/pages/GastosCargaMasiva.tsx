@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Eye, FileUp, Loader2, Plus, Save, Trash2, Upload, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, CopyCheck, Eye, FileUp, Loader2, Plus, Save, Trash2, Upload, XCircle } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PageHeader } from '@/components/PageHeader';
 import { EmpresaModal } from '@/components/EmpresaModal';
@@ -25,15 +25,18 @@ import {
   validateGastoDraft,
 } from '@/lib/gasto-document';
 import {
+  duplicadosDelError,
   postgresApi,
   type BootstrapResponse,
   type GastoBankOperation,
   type GastoDocumentExtractionResult,
+  type GastoEquivalente,
 } from '@/services/postgresApi';
+import { nuevoIntentoId } from '@/lib/gastos-duplicados';
 import { useAppAuth } from '@/hooks/useAppAuth';
 import { getDefaultRoute, hasPermission, PERMISSIONS } from '@/lib/access-control';
 
-type BulkRowStatus = 'pendiente' | 'extrayendo' | 'listo' | 'error' | 'validado' | 'guardando' | 'guardado';
+type BulkRowStatus = 'pendiente' | 'extrayendo' | 'listo' | 'error' | 'validado' | 'guardando' | 'guardado' | 'duplicado';
 type EmpresaMatchInfo = ReturnType<typeof resolveEmpresaMatch>;
 
 type BulkGastoDraft = {
@@ -74,6 +77,10 @@ type BulkGastoRow = {
   origenBancario?: BulkRowOrigenBancario;
   error?: string;
   savedGastoId?: string;
+  /** Mismo id en cada reintento de esta fila: evita crear dos gastos. */
+  intentoId?: string;
+  /** Gastos ya guardados que coinciden con esta fila. */
+  duplicados?: GastoEquivalente[];
 };
 
 type BulkApplyDraft = Partial<Pick<BulkGastoDraft, 'categoria' | 'empresaId' | 'proyectoId' | 'tipoDocumento'>>;
@@ -163,6 +170,7 @@ function statusBadge(row: BulkGastoRow) {
   if (row.status === 'validado') return <Badge className="bg-blue-600">Validado</Badge>;
   if (row.status === 'listo') return <Badge variant="outline">Listo</Badge>;
   if (row.status === 'extrayendo') return <Badge variant="secondary">Extrayendo</Badge>;
+  if (row.status === 'duplicado') return <Badge className="bg-amber-500">Duplicado</Badge>;
   if (row.status === 'error') return <Badge variant="destructive">Error</Badge>;
   return <Badge variant="outline">Pendiente</Badge>;
 }
@@ -193,6 +201,7 @@ export default function GastosCargaMasiva() {
   const sortedTiposDocumento = useMemo(() => [...tiposDocumento].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')), [tiposDocumento]);
 
   const validatedRows = rows.filter((row) => row.status === 'validado');
+  const duplicatedRows = rows.filter((row) => row.status === 'duplicado');
   const selectedRowsCount = rows.filter((row) => row.selected && row.status !== 'guardado').length;
   const extractionInProgress = rows.some((row) => row.status === 'extrayendo' || row.status === 'pendiente');
 
@@ -455,11 +464,15 @@ export default function GastosCargaMasiva() {
 
       const nextDraft = { ...row.draft, [field]: value };
       const validationErrors = validateRow(nextDraft);
-      const nextStatus: BulkRowStatus = row.status === 'error'
-        ? 'error'
-        : row.status === 'validado' && validationErrors.length > 0
-          ? 'listo'
-          : row.status;
+      // Al editar una fila marcada como duplicada, los datos cambiaron: vuelve
+      // a la cola normal para que el servidor la evalue de nuevo.
+      const nextStatus: BulkRowStatus = row.status === 'duplicado'
+        ? (validationErrors.length > 0 ? 'listo' : 'validado')
+        : row.status === 'error'
+          ? 'error'
+          : row.status === 'validado' && validationErrors.length > 0
+            ? 'listo'
+            : row.status;
 
       return {
         ...row,
@@ -467,6 +480,10 @@ export default function GastosCargaMasiva() {
         empresaMatchInfo: field === 'empresaId' ? null : row.empresaMatchInfo,
         status: nextStatus,
         validationErrors,
+        duplicados: row.status === 'duplicado' ? undefined : row.duplicados,
+        error: row.status === 'duplicado' ? undefined : row.error,
+        // Datos distintos: nuevo intento de guardado.
+        intentoId: row.status === 'duplicado' ? undefined : row.intentoId,
       };
     });
   }, [setRow, validateRow]);
@@ -579,25 +596,45 @@ export default function GastosCargaMasiva() {
     };
   }, [sortedTiposDocumento]);
 
-  const saveValidatedRows = useCallback(async () => {
-    const rowsToSave = rows.filter((row) => row.status === 'validado');
+  const guardarFilas = useCallback(async (rowsToSave: BulkGastoRow[], permitirDuplicado: boolean) => {
     if (rowsToSave.length === 0) return;
 
     setSaving(true);
+    let duplicadosDetectados = 0;
 
     for (const row of rowsToSave) {
-      setRow(row.id, (current) => ({ ...current, status: 'guardando' }));
+      // El id del intento se conserva entre reintentos de la misma fila.
+      const intentoId = row.intentoId || nuevoIntentoId();
+      setRow(row.id, (current) => ({ ...current, status: 'guardando', intentoId }));
 
       try {
-        const created = await postgresApi.createGasto(buildGastoPayload(row));
+        const created = await postgresApi.createGasto(buildGastoPayload(row), {
+          intentoId,
+          permitirDuplicado,
+        });
         setRow(row.id, (current) => ({
           ...current,
           status: 'guardado',
           savedGastoId: created.id,
           selected: false,
           validationErrors: [],
+          duplicados: undefined,
+          error: undefined,
         }));
       } catch (error) {
+        const duplicados = duplicadosDelError(error);
+
+        if (duplicados) {
+          duplicadosDetectados += 1;
+          setRow(row.id, (current) => ({
+            ...current,
+            status: 'duplicado',
+            duplicados,
+            error: `Ya existe un gasto con este documento, fecha y monto (${duplicados.length} coincidencia(s)).`,
+          }));
+          continue;
+        }
+
         setRow(row.id, (current) => ({
           ...current,
           status: 'error',
@@ -609,10 +646,22 @@ export default function GastosCargaMasiva() {
     setSaving(false);
     toast({
       title: 'Guardado masivo finalizado',
-      description: 'Las filas validadas fueron procesadas.',
-      variant: 'success',
+      description: duplicadosDetectados > 0
+        ? `${duplicadosDetectados} fila(s) quedaron marcadas como duplicadas y no se guardaron.`
+        : 'Las filas validadas fueron procesadas.',
+      variant: duplicadosDetectados > 0 ? 'default' : 'success',
     });
-  }, [buildGastoPayload, rows, setRow]);
+  }, [buildGastoPayload, setRow]);
+
+  const saveValidatedRows = useCallback(
+    () => guardarFilas(rows.filter((row) => row.status === 'validado'), false),
+    [guardarFilas, rows],
+  );
+
+  const saveDuplicatedRows = useCallback(
+    () => guardarFilas(rows.filter((row) => row.status === 'duplicado'), true),
+    [guardarFilas, rows],
+  );
 
   return (
     <Layout>
@@ -629,6 +678,14 @@ export default function GastosCargaMasiva() {
             variant: 'outline',
           },
           { label: 'Guardar validados', onClick: saveValidatedRows, icon: saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} /> },
+          ...(duplicatedRows.length > 0
+            ? [{
+                label: `Guardar ${duplicatedRows.length} duplicado(s) igual`,
+                onClick: saveDuplicatedRows,
+                icon: <CopyCheck size={18} />,
+                variant: 'outline' as const,
+              }]
+            : []),
         ]}
       />
 
