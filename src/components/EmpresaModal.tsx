@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Empresa } from '@/data/mockData';
+import { CategoriaEmpresa, Empresa } from '@/data/mockData';
 import { Save } from 'lucide-react';
 
 type EmpresaInitialValues = Partial<Pick<Empresa, 'razonSocial' | 'rut' | 'numeroContacto' | 'correoElectronico' | 'categoria'>>;
@@ -28,7 +28,7 @@ export function EmpresaModal({ open, onClose, onSave, empresa, initialValues }: 
   const [rut, setRut] = useState('');
   const [numeroContacto, setNumeroContacto] = useState('');
   const [correoElectronico, setCorreoElectronico] = useState('');
-  const [categoria, setCategoria] = useState<'Empresa' | 'Persona Natural' | ''>('');
+  const [categoria, setCategoria] = useState<CategoriaEmpresa | ''>('');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -53,7 +53,7 @@ export function EmpresaModal({ open, onClose, onSave, empresa, initialValues }: 
         rut,
         numeroContacto: numeroContacto || undefined,
         correoElectronico: correoElectronico || undefined,
-        categoria: categoria ? (categoria as 'Empresa' | 'Persona Natural') : undefined,
+        categoria: categoria || undefined,
       });
       onClose();
     } catch (error) {
@@ -81,13 +81,14 @@ export function EmpresaModal({ open, onClose, onSave, empresa, initialValues }: 
         <form onSubmit={handleSubmit} className="space-y-4 mt-4">
           <div className="space-y-2">
             <Label htmlFor="categoria">Categoría</Label>
-            <Select value={categoria} onValueChange={(value) => setCategoria(value as 'Empresa' | 'Persona Natural' | '')}>
+            <Select value={categoria} onValueChange={(value) => setCategoria(value as CategoriaEmpresa | '')}>
               <SelectTrigger id="categoria" className="bg-card">
                 <SelectValue placeholder="Seleccionar categoría" />
               </SelectTrigger>
               <SelectContent className="bg-card">
                 <SelectItem value="Empresa">Empresa</SelectItem>
                 <SelectItem value="Persona Natural">Persona Natural</SelectItem>
+                <SelectItem value="Sin individualizar">Sin individualizar</SelectItem>
               </SelectContent>
             </Select>
           </div>

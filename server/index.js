@@ -190,7 +190,7 @@ const empresaInputSchema = z.object({
   rut: z.string().optional().nullable(),
   numeroContacto: z.string().optional().nullable(),
   correoElectronico: z.string().optional().nullable(),
-  categoria: z.enum(['Empresa', 'Persona Natural']).optional().nullable(),
+  categoria: z.enum(['Empresa', 'Persona Natural', 'Sin individualizar']).optional().nullable(),
 });
 
 const empresaFusionInputSchema = createEmpresaFusionInputSchema(empresaInputSchema);

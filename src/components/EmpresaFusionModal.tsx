@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Empresa } from '@/data/mockData';
+import { CategoriaEmpresa, Empresa } from '@/data/mockData';
 import { AlertTriangle, Combine } from 'lucide-react';
 import { buildFusionDraft, contarGastosAReasignar, elegirEmpresaPrincipal } from '@/lib/empresa-fusion';
 
@@ -30,7 +30,7 @@ export function EmpresaFusionModal({ open, onClose, onSave, empresas, gastosPorE
   const [rut, setRut] = useState('');
   const [numeroContacto, setNumeroContacto] = useState('');
   const [correoElectronico, setCorreoElectronico] = useState('');
-  const [categoria, setCategoria] = useState<'Empresa' | 'Persona Natural' | ''>('');
+  const [categoria, setCategoria] = useState<CategoriaEmpresa | ''>('');
   const [confirmado, setConfirmado] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -75,7 +75,7 @@ export function EmpresaFusionModal({ open, onClose, onSave, empresas, gastosPorE
           rut,
           numeroContacto: numeroContacto || undefined,
           correoElectronico: correoElectronico || undefined,
-          categoria: categoria ? (categoria as 'Empresa' | 'Persona Natural') : undefined,
+          categoria: categoria || undefined,
         },
       });
       onClose();
@@ -148,7 +148,7 @@ export function EmpresaFusionModal({ open, onClose, onSave, empresas, gastosPorE
               <Label htmlFor="fusion-categoria">Categoría</Label>
               <Select
                 value={categoria}
-                onValueChange={(value) => setCategoria(value as 'Empresa' | 'Persona Natural' | '')}
+                onValueChange={(value) => setCategoria(value as CategoriaEmpresa | '')}
                 disabled={isSaving}
               >
                 <SelectTrigger id="fusion-categoria" className="bg-card">
@@ -157,6 +157,7 @@ export function EmpresaFusionModal({ open, onClose, onSave, empresas, gastosPorE
                 <SelectContent className="bg-card">
                   <SelectItem value="Empresa">Empresa</SelectItem>
                   <SelectItem value="Persona Natural">Persona Natural</SelectItem>
+                  <SelectItem value="Sin individualizar">Sin individualizar</SelectItem>
                 </SelectContent>
               </Select>
             </div>

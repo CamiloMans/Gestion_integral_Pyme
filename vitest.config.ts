@@ -10,7 +10,7 @@ export default defineConfig({
     // Los usuarios estan en Chile. Sin fijar la zona, un CI en UTC no ve los corrimientos de dia.
     env: { TZ: "America/Santiago" },
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "scripts/**/*.{test,spec}.mjs"],
   },
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },

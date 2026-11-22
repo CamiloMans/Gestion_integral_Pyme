@@ -1,11 +1,11 @@
-import type { Empresa } from '@/data/mockData';
+import type { CategoriaEmpresa, Empresa } from '@/data/mockData';
 
 export type EmpresaFusionDraft = {
   razonSocial: string;
   rut: string;
   numeroContacto: string;
   correoElectronico: string;
-  categoria: 'Empresa' | 'Persona Natural' | '';
+  categoria: CategoriaEmpresa | '';
 };
 
 function toTimestamp(value?: string) {
@@ -61,7 +61,7 @@ export function buildFusionDraft(empresas: Empresa[], empresaPrincipalId: string
     correoElectronico: primerValorPresente((empresa) => empresa.correoElectronico),
     categoria: (principal?.categoria
       || empresas.find((empresa) => empresa.categoria)?.categoria
-      || '') as 'Empresa' | 'Persona Natural' | '',
+      || '') as CategoriaEmpresa | '',
   };
 }
 

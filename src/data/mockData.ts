@@ -1,10 +1,14 @@
+/** Clasificacion del receptor del gasto. "Sin individualizar" es para conceptos
+ * de gasto usados como receptor y para RUT que no permiten decidir. */
+export type CategoriaEmpresa = 'Empresa' | 'Persona Natural' | 'Sin individualizar';
+
 export interface Empresa {
   id: string;
   razonSocial: string;
   rut: string;
   numeroContacto?: string;
   correoElectronico?: string;
-  categoria?: 'Empresa' | 'Persona Natural';
+  categoria?: CategoriaEmpresa;
   activo?: boolean;
   createdAt: string;
 }
