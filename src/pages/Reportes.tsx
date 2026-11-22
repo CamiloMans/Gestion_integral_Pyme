@@ -20,12 +20,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
-  Legend,
-  Line,
   Pie,
   PieChart,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -45,7 +41,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { describirPeriodo, resumirPromedios } from '@/lib/reportes-promedios';
+import { formatAmount, formatCompactAmount } from '@/lib/reportes-format';
+import { GastosVersusPagos } from '@/components/reportes/GastosVersusPagos';
 import { formatDateOnly } from '@/lib/date-format';
 import { postgresApi, type ReportesPortafolioResponse, type ReportesProject } from '@/services/postgresApi';
 
@@ -90,24 +87,6 @@ const HEALTH_CLASSES: Record<ReportesProject['health'], string> = {
   en_rango: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   sin_presupuesto: 'border-slate-200 bg-slate-50 text-slate-600',
 };
-
-function formatAmount(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
-  return new Intl.NumberFormat('es-CL', {
-    style: 'currency',
-    currency: 'CLP',
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function formatCompactAmount(value: number) {
-  return new Intl.NumberFormat('es-CL', {
-    style: 'currency',
-    currency: 'CLP',
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).format(value || 0);
-}
 
 function formatPercentage(value: number | null | undefined) {
   return value === null || value === undefined ? '-' : `${Math.round(value)}%`;
@@ -363,37 +342,6 @@ function HistoricalExpensesMetric({ data }: { data: ReportesPortafolioResponse }
   );
 }
 
-const ETIQUETAS_SERIE: Record<string, string> = {
-  expensesClp: 'Gastos',
-  paymentsClp: 'Pagos',
-  gastos: 'Gastos',
-  cobros: 'Cobros',
-  gastosAcumulados: 'Gastos acumulados',
-  cobrosAcumulados: 'Cobros acumulados',
-  aporteAcumulado: 'Aporte de REKOSOL',
-};
-
-const etiquetaSerie = (name?: string) => ETIQUETAS_SERIE[name ?? ''] ?? name ?? '';
-
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number; name?: string; color?: string }>; label?: string }) {
-  if (!active || !payload?.length) return null;
-
-  return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1 font-semibold text-foreground">{label}</p>
-      {payload.map((item) => (
-        <p key={item.name} className="flex items-center justify-between gap-4 text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-            {etiquetaSerie(item.name)}
-          </span>
-          <span className="font-semibold tabular-nums text-foreground">{formatAmount(item.value || 0)}</span>
-        </p>
-      ))}
-    </div>
-  );
-}
-
 function LoadingState() {
   return (
     <div className="space-y-4" aria-label="Cargando dashboard">
@@ -444,141 +392,6 @@ function CollectionBar({ data }: { data: ReportesPortafolioResponse }) {
       {data.collections.excessInvoicedClp > 0 && (
         <p className="mt-4 text-xs text-destructive text-pretty">Facturacion sobre cartera: {formatAmount(data.collections.excessInvoicedClp)}.</p>
       )}
-    </section>
-  );
-}
-
-const COLOR_GASTOS = 'hsl(213, 94%, 54%)';
-const COLOR_COBROS = 'hsl(152, 61%, 38%)';
-const COLOR_APORTE = 'hsl(32, 95%, 44%)';
-
-function ejesComunes() {
-  return (
-    <>
-      <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 32%, 91%)" />
-      <XAxis dataKey="label" stroke="hsl(215, 16%, 47%)" tickLine={false} axisLine={false} />
-      <YAxis tickFormatter={(value) => formatCompactAmount(Number(value))} stroke="hsl(215, 16%, 47%)" tickLine={false} axisLine={false} width={58} />
-      <Tooltip content={<ChartTooltip />} />
-      <Legend formatter={(value) => etiquetaSerie(String(value))} />
-    </>
-  );
-}
-
-function PromedioTile({ titulo, monto, nota }: { titulo: string; monto: number; nota?: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-background p-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{titulo}</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums text-foreground">{formatAmount(monto)}</p>
-      {nota && <p className="mt-1 text-xs text-muted-foreground text-pretty">{nota}</p>}
-    </div>
-  );
-}
-
-function PromediosPanel({ data }: { data: ReportesPortafolioResponse }) {
-  const [vista, setVista] = useState<'mensual' | 'acumulado'>('mensual');
-  const resumen = useMemo(() => resumirPromedios(data.averages), [data.averages]);
-
-  if (!resumen.puntos.length) {
-    return (
-      <p className="py-10 text-center text-sm text-muted-foreground">
-        El año elegido todavia no tiene meses con datos.
-      </p>
-    );
-  }
-
-  let notaDiferencia = 'Los dos ritmos van iguales.';
-  if (resumen.diferencia > 0) notaDiferencia = 'Se gasta mas rapido de lo que se cobra.';
-  else if (resumen.diferencia < 0) notaDiferencia = 'Se cobra mas rapido de lo que se gasta.';
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <PromedioTile titulo="Promedio mensual de gastos" monto={resumen.promedioGastos} />
-        <PromedioTile titulo="Promedio mensual de cobros" monto={resumen.promedioCobros} />
-        <PromedioTile titulo="Diferencia" monto={Math.abs(resumen.diferencia)} nota={notaDiferencia} />
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground text-pretty">{describirPeriodo(resumen)}</p>
-        <div className="flex gap-2">
-          <Button size="sm" variant={vista === 'mensual' ? 'default' : 'outline'} onClick={() => setVista('mensual')}>
-            Mensual
-          </Button>
-          <Button size="sm" variant={vista === 'acumulado' ? 'default' : 'outline'} onClick={() => setVista('acumulado')}>
-            Acumulado
-          </Button>
-        </div>
-      </div>
-
-      {/* Cada vista lleva su propia key y sin animacion: al cambiar de vista
-          recharts reutiliza el grafico y las lineas quedaban sin dibujar. */}
-      <div className="h-72 min-w-0">
-        <ResponsiveContainer width="100%" height="100%">
-          {vista === 'mensual' ? (
-            <ComposedChart key="promedios-mensual" data={resumen.puntos} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
-              {ejesComunes()}
-              <ReferenceLine y={resumen.promedioGastos} stroke={COLOR_GASTOS} strokeDasharray="5 4" />
-              <ReferenceLine y={resumen.promedioCobros} stroke={COLOR_COBROS} strokeDasharray="5 4" />
-              <Line type="monotone" dataKey="gastos" name="gastos" stroke={COLOR_GASTOS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="cobros" name="cobros" stroke={COLOR_COBROS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-            </ComposedChart>
-          ) : (
-            <ComposedChart key="promedios-acumulado" data={resumen.puntos} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
-              {ejesComunes()}
-              <Line type="monotone" dataKey="gastosAcumulados" name="gastosAcumulados" stroke={COLOR_GASTOS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="cobrosAcumulados" name="cobrosAcumulados" stroke={COLOR_COBROS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="aporteAcumulado" name="aporteAcumulado" stroke={COLOR_APORTE} strokeWidth={2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
-            </ComposedChart>
-          )}
-        </ResponsiveContainer>
-      </div>
-
-      <p className="text-xs text-muted-foreground text-pretty">
-        REKOSOL ha puesto {formatAmount(resumen.aporteFinal)} para sostener lo seleccionado: {formatAmount(resumen.gastosAcumulados)} gastados contra {formatAmount(resumen.cobrosAcumulados)} cobrados.
-        {resumen.tieneArrastre ? ' El acumulado arrastra lo ocurrido antes de enero.' : ''}
-      </p>
-      <p className="text-xs text-muted-foreground text-pretty">
-        Las dos series son caja efectiva: gastos ya pagados y cobros ya recibidos. Los compromisos sin pagar no entran.
-      </p>
-    </div>
-  );
-}
-
-function TrendChart({ data }: { data: ReportesPortafolioResponse }) {
-  const [tab, setTab] = useState<'mensual' | 'promedios'>('mensual');
-
-  return (
-    <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Periodo seleccionado</p>
-          <h2 className="mt-1 text-lg font-semibold text-foreground text-balance">Gastos versus pagos</h2>
-        </div>
-        <TrendingDown className="h-5 w-5 text-muted-foreground" />
-      </div>
-
-      <Tabs value={tab} onValueChange={(value) => setTab(value as 'mensual' | 'promedios')}>
-        <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
-          <TabsTrigger value="mensual">Mensual</TabsTrigger>
-          <TabsTrigger value="promedios">Promedios</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="mensual" className="mt-4">
-          <div className="h-72 min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data.trend} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
-                {ejesComunes()}
-                <Bar dataKey="expensesClp" name="expensesClp" fill={COLOR_GASTOS} radius={[3, 3, 0, 0]} maxBarSize={24} />
-                <Line type="monotone" dataKey="paymentsClp" name="paymentsClp" stroke={COLOR_COBROS} strokeWidth={2.5} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="promedios" className="mt-4">
-          <PromediosPanel data={data} />
-        </TabsContent>
-      </Tabs>
     </section>
   );
 }
@@ -946,7 +759,7 @@ export default function Reportes() {
                 canOpenMilestones={hasPermission(session, PERMISSIONS.PROJECT_CONTROL_MILESTONES)}
               />
             </div>
-            <TrendChart data={data} />
+            <GastosVersusPagos data={data} />
           </TabsContent>
 
           <TabsContent value="proyectos"><ProjectsTable data={data} /></TabsContent>
@@ -960,7 +773,7 @@ export default function Reportes() {
               <PieBreakdownChart title="categoria" items={data.categories} />
               <PieBreakdownChart title="proveedor" items={data.suppliers} />
             </div>
-            <TrendChart data={data} />
+            <GastosVersusPagos data={data} />
           </TabsContent>
         </Tabs>
       ) : null}
