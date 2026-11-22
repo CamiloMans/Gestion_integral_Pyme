@@ -440,6 +440,24 @@ type ReportesPortafolioResponse = {
     expensesClp: number;
     paymentsClp: number;
   }>;
+  averages: {
+    /** Los doce meses del año elegido, en meses incluso si se filtro un mes. */
+    months: Array<{
+      period: string;
+      label: string;
+      /** 'cerrado' ya termino, 'parcial' es el mes en curso, 'futuro' no llega. */
+      state: 'cerrado' | 'parcial' | 'futuro';
+      expensesClp: number;
+      paymentsClp: number;
+    }>;
+    /** Lo ocurrido antes del 1 de enero del año, para que el acumulado no reinicie. */
+    carryoverExpensesClp: number;
+    carryoverPaymentsClp: number;
+    /** El mes en curso, o null si el año elegido ya termino. */
+    currentPeriod: string | null;
+    elapsedDays: number | null;
+    daysInMonth: number | null;
+  };
   collections: {
     segments: Array<{
       key: string;

@@ -375,6 +375,52 @@ export function buildReportesPortafolio({
       .reduce((total, hito) => total + hito.amountClp, 0)),
   }));
 
+  // Serie mensual propia. `trend` pasa a dias cuando se elige un mes, y un
+  // promedio mensual necesita meses siempre. El arrastre es lo ocurrido antes
+  // del 1 de enero del año elegido, para que el acumulado no reinicie en enero
+  // en proyectos que vienen de años anteriores.
+  const yearStart = `${year}-01-01`;
+  const currentPeriod = today.slice(0, 7);
+
+  const monthlyMonths = MONTH_LABELS.map((label, index) => {
+    const period = `${year}-${String(index + 1).padStart(2, '0')}`;
+    let state = 'cerrado';
+    if (period > currentPeriod) state = 'futuro';
+    else if (period === currentPeriod) state = 'parcial';
+
+    return {
+      period,
+      label,
+      state,
+      expensesClp: roundClp(sumBy(
+        selectedExpenses.filter((gasto) => dateKey(gasto.fecha)?.startsWith(period)),
+        (gasto) => gasto.amountClp,
+      )),
+      paymentsClp: roundClp(sumBy(
+        normalizedHitos.filter((hito) => hito.pagado && hito.paymentDate?.startsWith(period)),
+        (hito) => hito.amountClp,
+      )),
+    };
+  });
+
+  const hasPartialMonth = monthlyMonths.some((entry) => entry.state === 'parcial');
+  const averages = {
+    months: monthlyMonths,
+    carryoverExpensesClp: roundClp(sumBy(
+      selectedExpenses.filter((gasto) => (dateKey(gasto.fecha) || '') < yearStart),
+      (gasto) => gasto.amountClp,
+    )),
+    carryoverPaymentsClp: roundClp(sumBy(
+      normalizedHitos.filter((hito) => hito.pagado && (hito.paymentDate || '') < yearStart && hito.paymentDate),
+      (hito) => hito.amountClp,
+    )),
+    currentPeriod: hasPartialMonth ? currentPeriod : null,
+    elapsedDays: hasPartialMonth ? Number(today.slice(8, 10)) : null,
+    daysInMonth: hasPartialMonth
+      ? new Date(Date.UTC(Number(year), Number(currentPeriod.slice(5, 7)), 0)).getUTCDate()
+      : null,
+  };
+
   const alerts = {
     overBudget: projectRows
       .filter((project) => project.health === 'sobre_presupuesto')
@@ -445,6 +491,7 @@ export function buildReportesPortafolio({
     historicalCategories,
     historicalSuppliers,
     trend,
+    averages,
     collections: {
       segments: [
         { key: 'paid', label: 'Pagado', amountClp: paidClp },

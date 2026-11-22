@@ -25,6 +25,7 @@ import {
   Line,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -44,6 +45,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { describirPeriodo, resumirPromedios } from '@/lib/reportes-promedios';
 import { formatDateOnly } from '@/lib/date-format';
 import { postgresApi, type ReportesPortafolioResponse, type ReportesProject } from '@/services/postgresApi';
 
@@ -361,6 +363,18 @@ function HistoricalExpensesMetric({ data }: { data: ReportesPortafolioResponse }
   );
 }
 
+const ETIQUETAS_SERIE: Record<string, string> = {
+  expensesClp: 'Gastos',
+  paymentsClp: 'Pagos',
+  gastos: 'Gastos',
+  cobros: 'Cobros',
+  gastosAcumulados: 'Gastos acumulados',
+  cobrosAcumulados: 'Cobros acumulados',
+  aporteAcumulado: 'Aporte de REKOSOL',
+};
+
+const etiquetaSerie = (name?: string) => ETIQUETAS_SERIE[name ?? ''] ?? name ?? '';
+
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number; name?: string; color?: string }>; label?: string }) {
   if (!active || !payload?.length) return null;
 
@@ -371,7 +385,7 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
         <p key={item.name} className="flex items-center justify-between gap-4 text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-            {item.name === 'expensesClp' ? 'Gastos' : 'Pagos'}
+            {etiquetaSerie(item.name)}
           </span>
           <span className="font-semibold tabular-nums text-foreground">{formatAmount(item.value || 0)}</span>
         </p>
@@ -434,7 +448,105 @@ function CollectionBar({ data }: { data: ReportesPortafolioResponse }) {
   );
 }
 
+const COLOR_GASTOS = 'hsl(213, 94%, 54%)';
+const COLOR_COBROS = 'hsl(152, 61%, 38%)';
+const COLOR_APORTE = 'hsl(32, 95%, 44%)';
+
+function ejesComunes() {
+  return (
+    <>
+      <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 32%, 91%)" />
+      <XAxis dataKey="label" stroke="hsl(215, 16%, 47%)" tickLine={false} axisLine={false} />
+      <YAxis tickFormatter={(value) => formatCompactAmount(Number(value))} stroke="hsl(215, 16%, 47%)" tickLine={false} axisLine={false} width={58} />
+      <Tooltip content={<ChartTooltip />} />
+      <Legend formatter={(value) => etiquetaSerie(String(value))} />
+    </>
+  );
+}
+
+function PromedioTile({ titulo, monto, nota }: { titulo: string; monto: number; nota?: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{titulo}</p>
+      <p className="mt-1 text-xl font-semibold tabular-nums text-foreground">{formatAmount(monto)}</p>
+      {nota && <p className="mt-1 text-xs text-muted-foreground text-pretty">{nota}</p>}
+    </div>
+  );
+}
+
+function PromediosPanel({ data }: { data: ReportesPortafolioResponse }) {
+  const [vista, setVista] = useState<'mensual' | 'acumulado'>('mensual');
+  const resumen = useMemo(() => resumirPromedios(data.averages), [data.averages]);
+
+  if (!resumen.puntos.length) {
+    return (
+      <p className="py-10 text-center text-sm text-muted-foreground">
+        El año elegido todavia no tiene meses con datos.
+      </p>
+    );
+  }
+
+  let notaDiferencia = 'Los dos ritmos van iguales.';
+  if (resumen.diferencia > 0) notaDiferencia = 'Se gasta mas rapido de lo que se cobra.';
+  else if (resumen.diferencia < 0) notaDiferencia = 'Se cobra mas rapido de lo que se gasta.';
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <PromedioTile titulo="Promedio mensual de gastos" monto={resumen.promedioGastos} />
+        <PromedioTile titulo="Promedio mensual de cobros" monto={resumen.promedioCobros} />
+        <PromedioTile titulo="Diferencia" monto={Math.abs(resumen.diferencia)} nota={notaDiferencia} />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground text-pretty">{describirPeriodo(resumen)}</p>
+        <div className="flex gap-2">
+          <Button size="sm" variant={vista === 'mensual' ? 'default' : 'outline'} onClick={() => setVista('mensual')}>
+            Mensual
+          </Button>
+          <Button size="sm" variant={vista === 'acumulado' ? 'default' : 'outline'} onClick={() => setVista('acumulado')}>
+            Acumulado
+          </Button>
+        </div>
+      </div>
+
+      {/* Cada vista lleva su propia key y sin animacion: al cambiar de vista
+          recharts reutiliza el grafico y las lineas quedaban sin dibujar. */}
+      <div className="h-72 min-w-0">
+        <ResponsiveContainer width="100%" height="100%">
+          {vista === 'mensual' ? (
+            <ComposedChart key="promedios-mensual" data={resumen.puntos} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+              {ejesComunes()}
+              <ReferenceLine y={resumen.promedioGastos} stroke={COLOR_GASTOS} strokeDasharray="5 4" />
+              <ReferenceLine y={resumen.promedioCobros} stroke={COLOR_COBROS} strokeDasharray="5 4" />
+              <Line type="monotone" dataKey="gastos" name="gastos" stroke={COLOR_GASTOS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="cobros" name="cobros" stroke={COLOR_COBROS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          ) : (
+            <ComposedChart key="promedios-acumulado" data={resumen.puntos} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+              {ejesComunes()}
+              <Line type="monotone" dataKey="gastosAcumulados" name="gastosAcumulados" stroke={COLOR_GASTOS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="cobrosAcumulados" name="cobrosAcumulados" stroke={COLOR_COBROS} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="aporteAcumulado" name="aporteAcumulado" stroke={COLOR_APORTE} strokeWidth={2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+
+      <p className="text-xs text-muted-foreground text-pretty">
+        REKOSOL ha puesto {formatAmount(resumen.aporteFinal)} para sostener lo seleccionado: {formatAmount(resumen.gastosAcumulados)} gastados contra {formatAmount(resumen.cobrosAcumulados)} cobrados.
+        {resumen.tieneArrastre ? ' El acumulado arrastra lo ocurrido antes de enero.' : ''}
+      </p>
+      <p className="text-xs text-muted-foreground text-pretty">
+        Las dos series son caja efectiva: gastos ya pagados y cobros ya recibidos. Los compromisos sin pagar no entran.
+      </p>
+    </div>
+  );
+}
+
 function TrendChart({ data }: { data: ReportesPortafolioResponse }) {
+  const [tab, setTab] = useState<'mensual' | 'promedios'>('mensual');
+
   return (
     <section className="rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6">
       <div className="mb-5 flex items-start justify-between gap-4">
@@ -444,19 +556,29 @@ function TrendChart({ data }: { data: ReportesPortafolioResponse }) {
         </div>
         <TrendingDown className="h-5 w-5 text-muted-foreground" />
       </div>
-      <div className="h-72 min-w-0">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data.trend} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 32%, 91%)" />
-            <XAxis dataKey="label" stroke="hsl(215, 16%, 47%)" tickLine={false} axisLine={false} />
-            <YAxis tickFormatter={(value) => formatCompactAmount(Number(value))} stroke="hsl(215, 16%, 47%)" tickLine={false} axisLine={false} width={58} />
-            <Tooltip content={<ChartTooltip />} />
-            <Legend formatter={(value) => value === 'expensesClp' ? 'Gastos' : 'Pagos'} />
-            <Bar dataKey="expensesClp" name="expensesClp" fill="hsl(213, 94%, 54%)" radius={[3, 3, 0, 0]} maxBarSize={24} />
-            <Line type="monotone" dataKey="paymentsClp" name="paymentsClp" stroke="hsl(152, 61%, 38%)" strokeWidth={2.5} dot={false} />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
+
+      <Tabs value={tab} onValueChange={(value) => setTab(value as 'mensual' | 'promedios')}>
+        <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
+          <TabsTrigger value="mensual">Mensual</TabsTrigger>
+          <TabsTrigger value="promedios">Promedios</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="mensual" className="mt-4">
+          <div className="h-72 min-w-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={data.trend} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+                {ejesComunes()}
+                <Bar dataKey="expensesClp" name="expensesClp" fill={COLOR_GASTOS} radius={[3, 3, 0, 0]} maxBarSize={24} />
+                <Line type="monotone" dataKey="paymentsClp" name="paymentsClp" stroke={COLOR_COBROS} strokeWidth={2.5} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="promedios" className="mt-4">
+          <PromediosPanel data={data} />
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
