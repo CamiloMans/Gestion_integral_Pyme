@@ -29,6 +29,7 @@ interface LayoutProps {
 const gastosNavItems = [
   { path: '/gastos', label: 'Gastos', icon: Receipt, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
   { path: '/gastos/por-pagar', label: 'Por Pagar', icon: CalendarClock, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
+  { path: '/gastos/por-receptor', label: 'Por Receptor', icon: Users, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
   { path: '/gastos/duplicados', label: 'Duplicados', icon: CopyCheck, permissions: [PERMISSIONS.EXPENSES_RECORDS] },
   {
     path: '/empresas',
